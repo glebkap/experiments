@@ -137,8 +137,9 @@ class FindObjectsUseCase:
             nlevels=self.config.get("orb_levels", 8),
         )
 
-        # Initialize the feature matcher
-        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        # Initialize the feature matcher for KNN matching instead of BFMatcher with crossCheck
+        # Using KNN matching with k=2 for Lowe's ratio test
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
         # Detect keypoints and compute descriptors for the input image
         kp_image, des_image = orb.detectAndCompute(gray_image, None)
@@ -147,30 +148,34 @@ class FindObjectsUseCase:
         if des_image is None or len(des_image) == 0:
             return doors, windows
 
-        # Process door templates
-        doors = self._process_templates_with_orb(
-            orb, bf, gray_image, kp_image, des_image, door_templates, True
-        )
+        # Process each door template individually
+        for door_template in door_templates:
+            detected_doors = self._process_template_with_orb(
+                orb, bf, gray_image, kp_image, des_image, door_template, True
+            )
+            doors.extend(detected_doors)
 
-        # Process window templates
-        windows = self._process_templates_with_orb(
-            orb, bf, gray_image, kp_image, des_image, window_templates, False
-        )
+        # Process each window template individually
+        for window_template in window_templates:
+            detected_windows = self._process_template_with_orb(
+                orb, bf, gray_image, kp_image, des_image, window_template, False
+            )
+            windows.extend(detected_windows)
 
         return doors, windows
 
-    def _process_templates_with_orb(
+    def _process_template_with_orb(
         self,
         orb,
         matcher,
         image: np.ndarray,
         kp_image,
         des_image,
-        templates: List[Dict[str, Any]],
+        template: Dict[str, Any],
         is_door: bool,
     ) -> List[Any]:
         """
-        Process a list of templates using ORB feature matching.
+        Process a single template using ORB feature matching.
 
         Args:
             orb: ORB detector
@@ -178,8 +183,8 @@ class FindObjectsUseCase:
             image: Grayscale input image
             kp_image: Keypoints from the input image
             des_image: Descriptors from the input image
-            templates: List of templates to process
-            is_door: Flag indicating if processing doors (True) or windows (False)
+            template: Template to process
+            is_door: Flag indicating if processing a door (True) or window (False)
 
         Returns:
             List of detected objects (Door or Window)
@@ -187,89 +192,87 @@ class FindObjectsUseCase:
         detected_objects = []
         min_matches = self.config.get("orb_min_matches", 10)
         match_ratio = self.config.get("orb_match_ratio", 0.75)
+        template_img = template["image"]
+        template_type = template["id"]  # Use template ID as object type
 
-        for template in templates:
-            template_img = template["image"]
+        # Detect keypoints and compute descriptors for the template
+        kp_template, des_template = orb.detectAndCompute(template_img, None)
 
-            # Detect keypoints and compute descriptors for the template
-            kp_template, des_template = orb.detectAndCompute(template_img, None)
+        # Skip if no keypoints found in template
+        if des_template is None or len(des_template) == 0:
+            return detected_objects
 
-            # Skip if no keypoints found in template
-            if des_template is None or len(des_template) == 0:
-                continue
+        # Use KNN matching instead of simple matching
+        # Match with k=2 to apply Lowe's ratio test
+        matches = matcher.knnMatch(des_template, des_image, k=2)
 
-            # Match descriptors
-            matches = matcher.match(des_template, des_image)
+        # Apply Lowe's ratio test to filter good matches
+        good_matches = []
+        for m, n in matches:
+            if m.distance < match_ratio * n.distance:
+                good_matches.append(m)
 
-            # Sort matches by distance
-            matches = sorted(matches, key=lambda x: x.distance)
+        # If we have enough good matches
+        if len(good_matches) >= min_matches:
+            # Extract matched keypoints
+            template_pts = np.float32(
+                [kp_template[m.queryIdx].pt for m in good_matches]
+            )
+            image_pts = np.float32([kp_image[m.trainIdx].pt for m in good_matches])
 
-            # Apply ratio test to filter good matches
-            good_matches = [
-                m
-                for m in matches
-                if m.distance < match_ratio * np.mean([m.distance for m in matches])
-            ]
+            # Find homography matrix
+            H, mask = cv2.findHomography(template_pts, image_pts, cv2.RANSAC, 5.0)
 
-            # If we have enough good matches
-            if len(good_matches) >= min_matches:
-                # Extract matched keypoints
-                template_pts = np.float32(
-                    [kp_template[m.queryIdx].pt for m in good_matches]
-                )
-                image_pts = np.float32([kp_image[m.trainIdx].pt for m in good_matches])
+            if H is not None:
+                # Get the corners of the template
+                h, w = template_img.shape
+                template_corners = np.float32(
+                    [[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]
+                ).reshape(-1, 1, 2)
 
-                # Find homography matrix
-                H, mask = cv2.findHomography(template_pts, image_pts, cv2.RANSAC, 5.0)
+                # Transform corners to image coordinates
+                transformed_corners = cv2.perspectiveTransform(template_corners, H)
 
-                if H is not None:
-                    # Get the corners of the template
-                    h, w = template_img.shape
-                    template_corners = np.float32(
-                        [[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]
-                    ).reshape(-1, 1, 2)
+                # Get bounding box
+                x_values = [pt[0][0] for pt in transformed_corners]
+                y_values = [pt[0][1] for pt in transformed_corners]
 
-                    # Transform corners to image coordinates
-                    transformed_corners = cv2.perspectiveTransform(template_corners, H)
+                x_min, x_max = int(min(x_values)), int(max(x_values))
+                y_min, y_max = int(min(y_values)), int(max(y_values))
 
-                    # Get bounding box
-                    x_values = [pt[0][0] for pt in transformed_corners]
-                    y_values = [pt[0][1] for pt in transformed_corners]
+                width = x_max - x_min
+                height = y_max - y_min
 
-                    x_min, x_max = int(min(x_values)), int(max(x_values))
-                    y_min, y_max = int(min(y_values)), int(max(y_values))
+                # Filter out unlikely detections based on size
+                if width > 0 and height > 0:
+                    if is_door:
+                        obj = Door(
+                            object_id=str(uuid.uuid4()),
+                            object_type=None,  # Will be set by __post_init__
+                            top_left=Coordinates(x=x_min, y=y_min),
+                            size=Size(width=width, height=height),
+                            confidence=(
+                                len(good_matches) / len(kp_template)
+                                if len(kp_template) > 0
+                                else 0.5
+                            ),
+                            template_type=template_type,  # Set the template type from ID
+                        )
+                    else:
+                        obj = Window(
+                            object_id=str(uuid.uuid4()),
+                            object_type=None,  # Will be set by __post_init__
+                            top_left=Coordinates(x=x_min, y=y_min),
+                            size=Size(width=width, height=height),
+                            confidence=(
+                                len(good_matches) / len(kp_template)
+                                if len(kp_template) > 0
+                                else 0.5
+                            ),
+                            template_type=template_type,  # Set the template type from ID
+                        )
 
-                    width = x_max - x_min
-                    height = y_max - y_min
-
-                    # Filter out unlikely detections based on size
-                    if width > 0 and height > 0:
-                        if is_door:
-                            obj = Door(
-                                object_id=str(uuid.uuid4()),
-                                object_type=None,  # Will be set by __post_init__
-                                top_left=Coordinates(x=x_min, y=y_min),
-                                size=Size(width=width, height=height),
-                                confidence=(
-                                    len(good_matches) / len(kp_template)
-                                    if len(kp_template) > 0
-                                    else 0.5
-                                ),
-                            )
-                        else:
-                            obj = Window(
-                                object_id=str(uuid.uuid4()),
-                                object_type=None,  # Will be set by __post_init__
-                                top_left=Coordinates(x=x_min, y=y_min),
-                                size=Size(width=width, height=height),
-                                confidence=(
-                                    len(good_matches) / len(kp_template)
-                                    if len(kp_template) > 0
-                                    else 0.5
-                                ),
-                            )
-
-                        detected_objects.append(obj)
+                    detected_objects.append(obj)
 
         return detected_objects
 
@@ -360,9 +363,10 @@ class FindObjectsUseCase:
         doors = []
         windows = []
 
-        # Process door templates
+        # Process each door template individually
         for template in door_templates:
             matches = self._template_matching(gray_image, template["image"])
+            template_type = template["id"]  # Use template ID as object type
             for match in matches:
                 x, y = match["position"]
                 width, height = template["size"]
@@ -372,12 +376,14 @@ class FindObjectsUseCase:
                     top_left=Coordinates(x=x, y=y),
                     size=Size(width=width, height=height),
                     confidence=match["confidence"],
+                    template_type=template_type,  # Set the template type from ID
                 )
                 doors.append(door)
 
-        # Process window templates
+        # Process each window template individually
         for template in window_templates:
             matches = self._template_matching(gray_image, template["image"])
+            template_type = template["id"]  # Use template ID as object type
             for match in matches:
                 x, y = match["position"]
                 width, height = template["size"]
@@ -387,6 +393,7 @@ class FindObjectsUseCase:
                     top_left=Coordinates(x=x, y=y),
                     size=Size(width=width, height=height),
                     confidence=match["confidence"],
+                    template_type=template_type,  # Set the template type from ID
                 )
                 windows.append(window)
 

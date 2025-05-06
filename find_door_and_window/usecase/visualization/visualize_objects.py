@@ -139,6 +139,10 @@ class VisualizeObjectsUseCase:
             image, (x1, y1), (x2, y2), color, self.config.get("line_thickness", 2)
         )
 
+        # Add template type to label if available
+        if obj.template_type:
+            label = f"{label} ({obj.template_type})"
+
         # Add label
         cv2.putText(
             image,
@@ -171,7 +175,7 @@ class VisualizeObjectsUseCase:
             cv2.putText(
                 image,
                 text,
-                (image.shape[1] - 200, y_offset),
+                (image.shape[1] - 250, y_offset),  # Increased x offset for more space
                 cv2.FONT_HERSHEY_SIMPLEX,
                 self.config.get("font_scale", 0.5),
                 self.config.get("text_color", (0, 0, 0)),

@@ -41,7 +41,7 @@ def create_find_objects_usecase(
         "orb_scale_factor": 1.2,  # Pyramid scale factor
         "orb_levels": 8,  # Number of pyramid levels
         "orb_min_matches": 10,  # Minimum number of good matches to consider
-        "orb_match_ratio": 0.75,  # Ratio for filtering good matches
+        "orb_match_ratio": 0.75,  # Ratio threshold for Lowe's ratio test (KNN matching)
     }
 
     # Override defaults with provided config

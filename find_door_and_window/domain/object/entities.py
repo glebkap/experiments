@@ -39,6 +39,7 @@ class Object:
     top_left: Coordinates
     size: Size
     confidence: float = 0.0
+    template_type: str = None  # Template name/id that matched this object
 
     @property
     def bottom_right(self) -> Coordinates:
@@ -70,7 +71,9 @@ class Door(Object):
 
     def __post_init__(self):
         """Initialize with door type."""
-        self.object_type = ObjectType.DOOR
+        # Only set object_type if not already set
+        if not self.object_type:
+            self.object_type = ObjectType.DOOR
 
 
 @dataclass
@@ -79,7 +82,9 @@ class Window(Object):
 
     def __post_init__(self):
         """Initialize with window type."""
-        self.object_type = ObjectType.WINDOW
+        # Only set object_type if not already set
+        if not self.object_type:
+            self.object_type = ObjectType.WINDOW
 
 
 @dataclass

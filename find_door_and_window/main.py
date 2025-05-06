@@ -104,7 +104,7 @@ def main():
         "--orb-match-ratio",
         type=float,
         default=0.75,
-        help="Ratio for filtering good ORB matches (0.0-1.0)",
+        help="Ratio threshold for Lowe's ratio test in KNN matching (0.0-1.0)",
     )
 
     args = parser.parse_args()
