@@ -10,8 +10,6 @@ from typing import Dict, Any, Optional, Tuple
 
 from domain.object.entities import Door, Window, DetectedObjects
 from domain.object.repository import ObjectRepository
-from domain.room.repository import BuildingPlanRepository
-from domain.room.entities import BuildingPlan
 
 
 class VisualizeObjectsUseCase:
@@ -22,7 +20,6 @@ class VisualizeObjectsUseCase:
     def __init__(
         self,
         object_repository: ObjectRepository,
-        building_plan_repository: BuildingPlanRepository,
         config: Dict[str, Any],
     ):
         """
@@ -30,46 +27,39 @@ class VisualizeObjectsUseCase:
 
         Args:
             object_repository: Repository for accessing detected objects
-            building_plan_repository: Repository for building plans
             config: Configuration dictionary with visualization parameters
         """
         self.object_repository = object_repository
-        self.building_plan_repository = building_plan_repository
         self.config = config
 
-    def execute(self, plan_id: str, output_path: Optional[Path] = None) -> Path:
+    def execute(
+        self,
+        image_path: Path,
+        detected_objects: DetectedObjects,
+        output_path: Optional[Path] = None,
+    ) -> Path:
         """
         Execute the visualization process.
 
         Args:
-            plan_id: ID of the building plan to visualize
+            image_path: Path to the input image
+            detected_objects: Objects detected on the image
             output_path: Optional path to save the output image
 
         Returns:
             Path to the output visualized image
 
         Raises:
-            ValueError: If plan_id is invalid or plan cannot be loaded
+            ValueError: If image_path is invalid or image cannot be loaded
         """
-        # Step 1: Load the building plan
-        plan = self.building_plan_repository.get_plan_by_id(plan_id)
-        if not plan:
-            raise ValueError(f"Building plan not found: {plan_id}")
+        # Step 1: Create visualization
+        result_image = self._create_visualization(image_path, detected_objects)
 
-        # Step 2: Get detected objects
-        doors = self.object_repository.get_doors()
-        windows = self.object_repository.get_windows()
-        detected_objects = DetectedObjects(doors=doors, windows=windows)
-
-        # Step 3: Create visualization
-        result_image = self._create_visualization(plan, detected_objects)
-
-        # Step 4: Save the visualization if output path provided
+        # Step 2: Save the visualization if output path provided
         if output_path is None:
             # Create output path based on input path
             output_path = (
-                plan.image_path.parent
-                / f"{plan.image_path.stem}_marked{plan.image_path.suffix}"
+                image_path.parent / f"{image_path.stem}_marked{image_path.suffix}"
             )
 
         # Ensure the directory exists
@@ -81,22 +71,22 @@ class VisualizeObjectsUseCase:
         return output_path
 
     def _create_visualization(
-        self, plan: BuildingPlan, objects: DetectedObjects
+        self, image_path: Path, objects: DetectedObjects
     ) -> np.ndarray:
         """
         Create a visualization of the detected objects on the building plan.
 
         Args:
-            plan: Building plan to visualize
+            image_path: Path to the input image
             objects: Detected objects to visualize
 
         Returns:
             Visualization image with marked objects
         """
         # Load the original image
-        original_image = cv2.imread(str(plan.image_path))
+        original_image = cv2.imread(str(image_path))
         if original_image is None:
-            raise ValueError(f"Failed to load image: {plan.image_path}")
+            raise ValueError(f"Failed to load image: {image_path}")
 
         # Create a copy for visualization
         visualization = original_image.copy()

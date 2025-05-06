@@ -41,18 +41,18 @@ pip install -r requirements.txt
 Для обработки плана здания выполните:
 
 ```bash
-python main.py --plan <id_плана> --data-dir <путь_к_директории_данных> --output-dir <путь_к_директории_вывода>
+python main.py --image <путь_к_изображению> --data-dir <путь_к_директории_данных> --output-dir <путь_к_директории_вывода>
 ```
 
 Параметры:
-- `--plan` - идентификатор плана (обязательный)
+- `--image` - путь к изображению плана здания (обязательный)
 - `--data-dir` - путь к директории с данными (по умолчанию ./data)
 - `--output-dir` - путь к директории вывода (по умолчанию ./results)
 - `--template-threshold` - порог сопоставления шаблонов (по умолчанию 0.7)
 
 Пример:
 ```bash
-python main.py --plan building_1 --data-dir ./data --output-dir ./results
+python main.py --image ./data/plans/building_1.png --data-dir ./data --output-dir ./results
 ```
 
 ## Алгоритм

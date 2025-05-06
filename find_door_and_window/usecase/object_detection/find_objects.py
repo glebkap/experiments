@@ -14,8 +14,6 @@ from domain.object.repository import (
     WindowTemplateRepository,
     ObjectRepository,
 )
-from domain.room.repository import BuildingPlanRepository
-from domain.room.entities import BuildingPlan
 
 
 class FindObjectsUseCase:
@@ -35,7 +33,6 @@ class FindObjectsUseCase:
         self,
         door_repository: DoorTemplateRepository,
         window_repository: WindowTemplateRepository,
-        building_plan_repository: BuildingPlanRepository,
         object_repository: ObjectRepository,
         config: Dict[str, Any],
     ):
@@ -45,55 +42,48 @@ class FindObjectsUseCase:
         Args:
             door_repository: Repository for door templates
             window_repository: Repository for window templates
-            building_plan_repository: Repository for building plans
             object_repository: Repository for storing detection results
             config: Configuration dictionary with parameters for algorithms
         """
         self.door_repository = door_repository
         self.window_repository = window_repository
-        self.building_plan_repository = building_plan_repository
         self.object_repository = object_repository
         self.config = config
 
-    def execute(self, plan_id: str) -> DetectedObjects:
+    def execute(self, image_path: Path) -> DetectedObjects:
         """
-        Execute the object detection process on a building plan.
+        Execute the object detection process on a building plan image.
 
         Args:
-            plan_id: ID of the building plan to analyze
+            image_path: Path to the image file to analyze
 
         Returns:
             DetectedObjects: Container with detected doors and windows
 
         Raises:
-            ValueError: If plan_id is invalid or plan cannot be loaded
+            ValueError: If image_path is invalid or image cannot be loaded
         """
-        # Step 1: Load the building plan
-        plan = self.building_plan_repository.get_plan_by_id(plan_id)
-        if not plan:
-            raise ValueError(f"Building plan not found: {plan_id}")
+        # Process the image
+        detected_objects = self._process_image(image_path)
 
-        # Step 2: Process the plan image
-        detected_objects = self._process_image(plan)
-
-        # Step 3: Store the results
+        # Store the results
         self.object_repository.save_doors(detected_objects.doors)
         self.object_repository.save_windows(detected_objects.windows)
 
         return detected_objects
 
-    def _process_image(self, plan: BuildingPlan) -> DetectedObjects:
+    def _process_image(self, image_path: Path) -> DetectedObjects:
         """
         Process a building plan image to find doors and windows.
 
         Args:
-            plan: Building plan to analyze
+            image_path: Path to the image file
 
         Returns:
             DetectedObjects: Container with detected doors and windows
         """
         # Step 1: Load and preprocess the image
-        image = self._load_and_preprocess_image(plan.image_path)
+        image = self._load_and_preprocess_image(image_path)
 
         # Step 2: Load and prepare templates
         door_templates = self._load_templates(self.door_repository.get_all_templates())

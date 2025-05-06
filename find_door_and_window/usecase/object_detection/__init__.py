@@ -10,7 +10,6 @@ from domain.object.repository import (
     WindowTemplateRepository,
     ObjectRepository,
 )
-from domain.room.repository import BuildingPlanRepository
 
 from .find_objects import FindObjectsUseCase
 
@@ -18,7 +17,6 @@ from .find_objects import FindObjectsUseCase
 def create_find_objects_usecase(
     door_repository: DoorTemplateRepository,
     window_repository: WindowTemplateRepository,
-    building_plan_repository: BuildingPlanRepository,
     object_repository: ObjectRepository,
     config: Dict[str, Any] = None,
 ) -> FindObjectsUseCase:
@@ -28,7 +26,6 @@ def create_find_objects_usecase(
     Args:
         door_repository: Repository for door templates
         window_repository: Repository for window templates
-        building_plan_repository: Repository for building plans
         object_repository: Repository for detected objects
         config: Optional configuration dictionary
 
@@ -49,7 +46,6 @@ def create_find_objects_usecase(
     return FindObjectsUseCase(
         door_repository=door_repository,
         window_repository=window_repository,
-        building_plan_repository=building_plan_repository,
         object_repository=object_repository,
         config=default_config,
     )

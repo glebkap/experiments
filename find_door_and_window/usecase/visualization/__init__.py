@@ -5,14 +5,12 @@ Visualization usecase module.
 from typing import Dict, Any
 
 from domain.object.repository import ObjectRepository
-from domain.room.repository import BuildingPlanRepository
 
 from .visualize_objects import VisualizeObjectsUseCase
 
 
 def create_visualize_objects_usecase(
     object_repository: ObjectRepository,
-    building_plan_repository: BuildingPlanRepository,
     config: Dict[str, Any] = None,
 ) -> VisualizeObjectsUseCase:
     """
@@ -20,7 +18,6 @@ def create_visualize_objects_usecase(
 
     Args:
         object_repository: Repository for accessing detected objects
-        building_plan_repository: Repository for building plans
         config: Optional configuration dictionary
 
     Returns:
@@ -41,6 +38,5 @@ def create_visualize_objects_usecase(
 
     return VisualizeObjectsUseCase(
         object_repository=object_repository,
-        building_plan_repository=building_plan_repository,
         config=default_config,
     )
