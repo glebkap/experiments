@@ -5,6 +5,7 @@ Usecase implementation for visualizing detected doors and windows.
 import os
 import cv2
 import numpy as np
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
@@ -32,6 +33,49 @@ class VisualizeObjectsUseCase:
         self.object_repository = object_repository
         self.config = config
 
+        # Configure logging and debug mode
+        self.debug_mode = config.get("debug", False)
+        if self.debug_mode:
+            logging.basicConfig(
+                level=logging.DEBUG,
+                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            )
+        else:
+            logging.basicConfig(level=logging.INFO)
+
+        self.logger = logging.getLogger("VisualizeObjectsUseCase")
+
+        # Create debug directory if needed
+        if self.debug_mode:
+            self.debug_dir = Path("results/debug")
+            os.makedirs(self.debug_dir, exist_ok=True)
+            self.logger.debug(
+                "Debug mode enabled. Images will be saved to %s", self.debug_dir
+            )
+
+    def _save_debug_image(
+        self, name: str, image: np.ndarray, image_path: Optional[Path] = None
+    ):
+        """
+        Save an image for debugging purposes.
+
+        Args:
+            name: Name to identify the debug image
+            image: Image to save
+            image_path: Original image path (to extract filename)
+        """
+        if not self.debug_mode:
+            return
+
+        if image_path:
+            filename = f"{image_path.stem}_{name}{image_path.suffix}"
+        else:
+            filename = f"debug_{name}.png"
+
+        output_path = self.debug_dir / filename
+        cv2.imwrite(str(output_path), image)
+        self.logger.debug(f"Saved debug visualization: {output_path}")
+
     def execute(
         self,
         image_path: Path,
@@ -52,6 +96,12 @@ class VisualizeObjectsUseCase:
         Raises:
             ValueError: If image_path is invalid or image cannot be loaded
         """
+        if self.debug_mode:
+            self.logger.debug(f"Starting visualization for {image_path}")
+            self.logger.debug(
+                f"Visualizing {detected_objects.door_count} doors and {detected_objects.window_count} windows"
+            )
+
         # Step 1: Create visualization
         result_image = self._create_visualization(image_path, detected_objects)
 
@@ -67,6 +117,9 @@ class VisualizeObjectsUseCase:
 
         # Save the image
         cv2.imwrite(str(output_path), result_image)
+
+        if self.debug_mode:
+            self.logger.debug(f"Visualization saved to: {output_path}")
 
         return output_path
 
@@ -88,8 +141,16 @@ class VisualizeObjectsUseCase:
         if original_image is None:
             raise ValueError(f"Failed to load image: {image_path}")
 
+        if self.debug_mode:
+            self.logger.debug(f"Loaded original image: {image_path}")
+
         # Create a copy for visualization
         visualization = original_image.copy()
+
+        # Create intermediate visualizations for debugging
+        if self.debug_mode:
+            doors_only = original_image.copy()
+            windows_only = original_image.copy()
 
         # Draw doors
         for i, door in enumerate(objects.doors):
@@ -100,6 +161,17 @@ class VisualizeObjectsUseCase:
                 f"Door {i+1}",
             )
 
+            if self.debug_mode:
+                self._draw_object(
+                    doors_only,
+                    door,
+                    self.config.get("door_color", (0, 0, 255)),
+                    f"Door {i+1}",
+                )
+                self.logger.debug(
+                    f"Drawing Door {i+1} at ({door.top_left.x}, {door.top_left.y}) with size {door.size.width}x{door.size.height}"
+                )
+
         # Draw windows
         for i, window in enumerate(objects.windows):
             self._draw_object(
@@ -109,8 +181,25 @@ class VisualizeObjectsUseCase:
                 f"Window {i+1}",
             )
 
+            if self.debug_mode:
+                self._draw_object(
+                    windows_only,
+                    window,
+                    self.config.get("window_color", (255, 0, 0)),
+                    f"Window {i+1}",
+                )
+                self.logger.debug(
+                    f"Drawing Window {i+1} at ({window.top_left.x}, {window.top_left.y}) with size {window.size.width}x{window.size.height}"
+                )
+
         # Add statistics to the image
         self._add_statistics(visualization, objects)
+
+        # Save intermediate visualizations for debugging
+        if self.debug_mode:
+            self._save_debug_image("doors_only", doors_only, image_path)
+            self._save_debug_image("windows_only", windows_only, image_path)
+            self._save_debug_image("final_visualization", visualization, image_path)
 
         return visualization
 

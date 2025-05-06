@@ -46,6 +46,7 @@ def process_image(
 
     visualize_usecase = create_visualize_objects_usecase(
         object_repository=object_repo,
+        config=config,
     )
 
     # Execute object detection
@@ -86,6 +87,11 @@ def main():
         default=0.7,
         help="Threshold for template matching (0.0-1.0)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode to save intermediate images and show detailed logs",
+    )
 
     # ORB algorithm parameters
     parser.add_argument(
@@ -122,6 +128,8 @@ def main():
         "orb_features": args.orb_features,
         "orb_min_matches": args.orb_min_matches,
         "orb_match_ratio": args.orb_match_ratio,
+        # Debug mode
+        "debug": args.debug,
     }
 
     # Process the plan

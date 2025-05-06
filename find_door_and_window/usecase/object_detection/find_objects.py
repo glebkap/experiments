@@ -5,6 +5,8 @@ Usecase implementation for finding doors and windows on building plans.
 import uuid
 import cv2
 import numpy as np
+import os
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 
@@ -50,6 +52,49 @@ class FindObjectsUseCase:
         self.object_repository = object_repository
         self.config = config
 
+        # Configure logging
+        self.debug_mode = config.get("debug", False)
+        if self.debug_mode:
+            logging.basicConfig(
+                level=logging.DEBUG,
+                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            )
+        else:
+            logging.basicConfig(level=logging.INFO)
+
+        self.logger = logging.getLogger("FindObjectsUseCase")
+
+        # Create debug directory if needed
+        if self.debug_mode:
+            self.debug_dir = Path("results/debug")
+            os.makedirs(self.debug_dir, exist_ok=True)
+            self.logger.debug(
+                "Debug mode enabled. Images will be saved to %s", self.debug_dir
+            )
+
+    def _save_debug_image(
+        self, name: str, image: np.ndarray, image_path: Optional[Path] = None
+    ):
+        """
+        Save an image for debugging purposes.
+
+        Args:
+            name: Name to identify the debug image
+            image: Image to save
+            image_path: Original image path (to extract filename)
+        """
+        if not self.debug_mode:
+            return
+
+        if image_path:
+            filename = f"{image_path.stem}_{name}{image_path.suffix}"
+        else:
+            filename = f"debug_{name}.png"
+
+        output_path = self.debug_dir / filename
+        cv2.imwrite(str(output_path), image)
+        self.logger.debug(f"Saved debug image: {output_path}")
+
     def execute(self, image_path: Path) -> DetectedObjects:
         """
         Execute the object detection process on a building plan image.
@@ -63,12 +108,20 @@ class FindObjectsUseCase:
         Raises:
             ValueError: If image_path is invalid or image cannot be loaded
         """
+        if self.debug_mode:
+            self.logger.debug(f"Processing image: {image_path}")
+
         # Process the image
         detected_objects = self._process_image(image_path)
 
         # Store the results
         self.object_repository.save_doors(detected_objects.doors)
         self.object_repository.save_windows(detected_objects.windows)
+
+        if self.debug_mode:
+            self.logger.debug(
+                f"Detection complete. Found {detected_objects.door_count} doors and {detected_objects.window_count} windows"
+            )
 
         return detected_objects
 
@@ -85,25 +138,143 @@ class FindObjectsUseCase:
         # Step 1: Load and preprocess the image
         image = self._load_and_preprocess_image(image_path)
 
+        # Save preprocessed images for debugging
+        if self.debug_mode:
+            self._save_debug_image("1_gray", image["gray"], image_path)
+            self.logger.debug("Preprocessing complete")
+
         # Step 2: Load and prepare templates
         door_templates = self._load_templates(self.door_repository.get_all_templates())
         window_templates = self._load_templates(
             self.window_repository.get_all_templates()
         )
 
+        if self.debug_mode:
+            self.logger.debug(
+                f"Loaded {len(door_templates)} door templates and {len(window_templates)} window templates"
+            )
+
         # Step 3: Detect objects using ORB feature matching (rotation invariant)
         orb_doors, orb_windows = self._detect_objects_by_orb(
             image, door_templates, window_templates
         )
+
+        if self.debug_mode:
+            self.logger.debug(
+                f"ORB detection complete. Found {len(orb_doors)} doors and {len(orb_windows)} windows"
+            )
+            # Create visualization of ORB results
+            orig_img = cv2.imread(str(image_path))
+            orb_viz = orig_img.copy()
+
+            # Draw ORB detected doors
+            for i, door in enumerate(orb_doors):
+                cv2.rectangle(
+                    orb_viz,
+                    (door.top_left.x, door.top_left.y),
+                    (
+                        door.top_left.x + door.size.width,
+                        door.top_left.y + door.size.height,
+                    ),
+                    (0, 0, 255),  # Red in BGR
+                    2,
+                )
+
+            # Draw ORB detected windows
+            for i, window in enumerate(orb_windows):
+                cv2.rectangle(
+                    orb_viz,
+                    (window.top_left.x, window.top_left.y),
+                    (
+                        window.top_left.x + window.size.width,
+                        window.top_left.y + window.size.height,
+                    ),
+                    (255, 0, 0),  # Blue in BGR
+                    2,
+                )
+
+            self._save_debug_image("2_orb_detection", orb_viz, image_path)
 
         # Step 4: As a fallback, use template matching
         template_doors, template_windows = self._detect_objects_by_template_matching(
             image, door_templates, window_templates
         )
 
+        if self.debug_mode:
+            self.logger.debug(
+                f"Template matching complete. Found {len(template_doors)} doors and {len(template_windows)} windows"
+            )
+            # Create visualization of template matching results
+            orig_img = cv2.imread(str(image_path))
+            template_viz = orig_img.copy()
+
+            # Draw template detected doors
+            for i, door in enumerate(template_doors):
+                cv2.rectangle(
+                    template_viz,
+                    (door.top_left.x, door.top_left.y),
+                    (
+                        door.top_left.x + door.size.width,
+                        door.top_left.y + door.size.height,
+                    ),
+                    (0, 255, 0),  # Green in BGR
+                    2,
+                )
+
+            # Draw template detected windows
+            for i, window in enumerate(template_windows):
+                cv2.rectangle(
+                    template_viz,
+                    (window.top_left.x, window.top_left.y),
+                    (
+                        window.top_left.x + window.size.width,
+                        window.top_left.y + window.size.height,
+                    ),
+                    (255, 255, 0),  # Cyan in BGR
+                    2,
+                )
+
+            self._save_debug_image("3_template_matching", template_viz, image_path)
+
         # Step 5: Merge results and remove duplicates
         all_doors = self._merge_and_filter_objects(orb_doors, template_doors)
         all_windows = self._merge_and_filter_objects(orb_windows, template_windows)
+
+        if self.debug_mode:
+            self.logger.debug(
+                f"After merging and filtering: {len(all_doors)} doors and {len(all_windows)} windows"
+            )
+            # Create visualization of final results
+            orig_img = cv2.imread(str(image_path))
+            final_viz = orig_img.copy()
+
+            # Draw final doors
+            for i, door in enumerate(all_doors):
+                cv2.rectangle(
+                    final_viz,
+                    (door.top_left.x, door.top_left.y),
+                    (
+                        door.top_left.x + door.size.width,
+                        door.top_left.y + door.size.height,
+                    ),
+                    (0, 0, 255),  # Red in BGR
+                    2,
+                )
+
+            # Draw final windows
+            for i, window in enumerate(all_windows):
+                cv2.rectangle(
+                    final_viz,
+                    (window.top_left.x, window.top_left.y),
+                    (
+                        window.top_left.x + window.size.width,
+                        window.top_left.y + window.size.height,
+                    ),
+                    (255, 0, 0),  # Blue in BGR
+                    2,
+                )
+
+            self._save_debug_image("4_final_detection", final_viz, image_path)
 
         return DetectedObjects(doors=all_doors, windows=all_windows)
 
@@ -248,7 +419,7 @@ class FindObjectsUseCase:
                     if is_door:
                         obj = Door(
                             object_id=str(uuid.uuid4()),
-                            object_type=None,  # Will be set by __post_init__
+                            object_type="door",
                             top_left=Coordinates(x=x_min, y=y_min),
                             size=Size(width=width, height=height),
                             confidence=(
@@ -261,7 +432,7 @@ class FindObjectsUseCase:
                     else:
                         obj = Window(
                             object_id=str(uuid.uuid4()),
-                            object_type=None,  # Will be set by __post_init__
+                            object_type="window",
                             top_left=Coordinates(x=x_min, y=y_min),
                             size=Size(width=width, height=height),
                             confidence=(
@@ -278,67 +449,79 @@ class FindObjectsUseCase:
 
     def _load_and_preprocess_image(self, image_path: Path) -> Dict[str, np.ndarray]:
         """
-        Load and preprocess an image for object detection.
+        Load and preprocess the building plan image.
 
         Args:
-            image_path: Path to the image file
+            image_path: Path to the input image
 
         Returns:
-            Dict containing original and preprocessed image versions
+            Dictionary with preprocessed images (original, gray)
+
+        Raises:
+            ValueError: If image cannot be loaded
         """
+        if self.debug_mode:
+            self.logger.debug(f"Loading image: {image_path}")
+
         # Load the image
-        image = cv2.imread(str(image_path))
-        if image is None:
+        original = cv2.imread(str(image_path))
+        if original is None:
             raise ValueError(f"Failed to load image: {image_path}")
 
         # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
+        if self.debug_mode:
+            self.logger.debug("Converted image to grayscale")
 
-        # Apply Gaussian blur to reduce noise
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        # Apply adaptive thresholding for binarization
-        binary = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
-        )
-
-        # Apply morphological operations to clean up the binary image
-        kernel = np.ones((3, 3), np.uint8)
-        morphed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-
+        # Return preprocessed images
         return {
-            "original": image,
+            "original": original,
             "gray": gray,
-            "blurred": blurred,
-            "binary": binary,
-            "morphed": morphed,
         }
 
     def _load_templates(self, template_paths: List[Path]) -> List[Dict[str, Any]]:
         """
-        Load and preprocess template images.
+        Load and prepare templates for detection.
 
         Args:
             template_paths: List of paths to template images
 
         Returns:
-            List of dictionaries containing template images and metadata
+            List of loaded templates with metadata
         """
         templates = []
 
-        for path in template_paths:
-            template_image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-            if template_image is None:
+        if self.debug_mode:
+            self.logger.debug(f"Loading {len(template_paths)} templates")
+
+        for i, path in enumerate(template_paths):
+            # Extract template type from filename
+            template_type = path.stem
+
+            # Load image
+            template_img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+            if template_img is None:
+                if self.debug_mode:
+                    self.logger.warning(f"Failed to load template: {path}")
                 continue
 
-            # Store template with its metadata
+            if self.debug_mode:
+                self.logger.debug(f"Loaded template {template_type} from {path}")
+                self._save_debug_image(f"template_{i}_{template_type}", template_img)
+
+            # Store template with metadata
             templates.append(
                 {
-                    "id": path.stem,
-                    "image": template_image,
-                    "size": (template_image.shape[1], template_image.shape[0]),
+                    "id": template_type,
+                    "image": template_img,
+                    "path": path,
+                    "width": template_img.shape[1],
+                    "height": template_img.shape[0],
                 }
             )
+
+        if self.debug_mode:
+            self.logger.debug(f"Successfully loaded {len(templates)} templates")
 
         return templates
 
@@ -349,7 +532,7 @@ class FindObjectsUseCase:
         window_templates: List[Dict[str, Any]],
     ) -> Tuple[List[Door], List[Window]]:
         """
-        Detect objects using template matching.
+        Detect objects using template matching algorithm.
 
         Args:
             image_dict: Dictionary with preprocessed images
@@ -359,43 +542,103 @@ class FindObjectsUseCase:
         Returns:
             Tuple of (door list, window list)
         """
+        if self.debug_mode:
+            self.logger.debug("Starting template matching detection")
+
         gray_image = image_dict["gray"]
         doors = []
         windows = []
 
-        # Process each door template individually
-        for template in door_templates:
-            matches = self._template_matching(gray_image, template["image"])
-            template_type = template["id"]  # Use template ID as object type
+        threshold = self.config.get("template_matching_threshold", 0.7)
+
+        if self.debug_mode:
+            self.logger.debug(f"Using template matching threshold: {threshold}")
+
+        # Process door templates
+        for door_template in door_templates:
+            if self.debug_mode:
+                self.logger.debug(f"Matching door template: {door_template['id']}")
+
+            template_img = door_template["image"]
+            template_type = door_template["id"]
+
+            # Perform template matching
+            matches = self._template_matching(gray_image, template_img)
+
+            if self.debug_mode:
+                self.logger.debug(
+                    f"Found {len(matches)} potential matches before filtering"
+                )
+
+            # Convert matches to Door objects
             for match in matches:
-                x, y = match["position"]
-                width, height = template["size"]
+                confidence = match["confidence"]
+
+                # Filter by confidence threshold
+                if confidence < threshold:
+                    continue
+
+                # Create a Door object
+                x, y = match["location"]
+                w, h = template_img.shape[1], template_img.shape[0]
+
                 door = Door(
                     object_id=str(uuid.uuid4()),
-                    object_type=None,  # Will be set by __post_init__
+                    object_type="door",
                     top_left=Coordinates(x=x, y=y),
-                    size=Size(width=width, height=height),
-                    confidence=match["confidence"],
-                    template_type=template_type,  # Set the template type from ID
+                    size=Size(width=w, height=h),
+                    confidence=confidence,
+                    template_type=template_type,
                 )
                 doors.append(door)
 
-        # Process each window template individually
-        for template in window_templates:
-            matches = self._template_matching(gray_image, template["image"])
-            template_type = template["id"]  # Use template ID as object type
+            if self.debug_mode:
+                self.logger.debug(
+                    f"Added {len(doors)} doors after filtering by confidence"
+                )
+
+        # Process window templates
+        for window_template in window_templates:
+            if self.debug_mode:
+                self.logger.debug(f"Matching window template: {window_template['id']}")
+
+            template_img = window_template["image"]
+            template_type = window_template["id"]
+
+            # Perform template matching
+            matches = self._template_matching(gray_image, template_img)
+
+            if self.debug_mode:
+                self.logger.debug(
+                    f"Found {len(matches)} potential matches before filtering"
+                )
+
+            # Convert matches to Window objects
             for match in matches:
-                x, y = match["position"]
-                width, height = template["size"]
+                confidence = match["confidence"]
+
+                # Filter by confidence threshold
+                if confidence < threshold:
+                    continue
+
+                # Create a Window object
+                x, y = match["location"]
+                w, h = template_img.shape[1], template_img.shape[0]
+
                 window = Window(
                     object_id=str(uuid.uuid4()),
-                    object_type=None,  # Will be set by __post_init__
+                    object_type="window",
                     top_left=Coordinates(x=x, y=y),
-                    size=Size(width=width, height=height),
-                    confidence=match["confidence"],
-                    template_type=template_type,  # Set the template type from ID
+                    size=Size(width=w, height=h),
+                    confidence=confidence,
+                    template_type=template_type,
                 )
                 windows.append(window)
+
+            if self.debug_mode:
+                self.logger.debug(
+                    f"Added {len(windows)} windows after filtering by confidence"
+                )
 
         return doors, windows
 
@@ -403,32 +646,67 @@ class FindObjectsUseCase:
         self, image: np.ndarray, template: np.ndarray
     ) -> List[Dict[str, Any]]:
         """
-        Perform template matching and return matches.
+        Perform template matching on an image.
 
         Args:
             image: Image to search in
             template: Template to search for
 
         Returns:
-            List of matches with positions and confidence
+            List of match dictionaries with position and confidence
         """
-        # Get template dimensions
-        h, w = template.shape
+        if self.debug_mode:
+            self.logger.debug(
+                f"Performing template matching with template size: {template.shape}"
+            )
 
-        # Apply template matching
+        # Get image dimensions
+        img_height, img_width = image.shape
+        template_height, template_width = template.shape
+
+        # If template is larger than image, skip
+        if template_height > img_height or template_width > img_width:
+            if self.debug_mode:
+                self.logger.debug("Template is larger than image, skipping")
+            return []
+
+        # Perform template matching
         result = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
 
-        # Find positions where the match exceeds the threshold
-        threshold = self.config.get("template_matching_threshold", 0.7)
-        locations = np.where(result >= threshold)
+        if self.debug_mode:
+            # Save template matching result as heatmap
+            result_normalized = cv2.normalize(
+                result, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U
+            )
+            result_heatmap = cv2.applyColorMap(result_normalized, cv2.COLORMAP_JET)
+            self._save_debug_image(
+                f"template_matching_heatmap_{template.shape[0]}x{template.shape[1]}",
+                result_heatmap,
+            )
 
-        # Convert to list of match dictionaries
-        matches = []
-        for pt in zip(*locations[::-1]):  # Reverse to get (x, y)
-            matches.append({"position": pt, "confidence": result[pt[1], pt[0]]})
+        # Find potential matches
+        potential_matches = []
+        loc = np.where(result >= self.config.get("template_matching_threshold", 0.7))
+
+        for y, x in zip(*loc):
+            potential_matches.append({"location": (x, y), "confidence": result[y, x]})
+
+        if self.debug_mode:
+            self.logger.debug(
+                f"Found {len(potential_matches)} potential matches above threshold"
+            )
 
         # Apply non-maximum suppression to remove overlapping detections
-        return self._non_maximum_suppression(matches, w, h)
+        final_matches = self._non_maximum_suppression(
+            potential_matches, template_width, template_height
+        )
+
+        if self.debug_mode:
+            self.logger.debug(
+                f"After non-maximum suppression: {len(final_matches)} matches"
+            )
+
+        return final_matches
 
     def _non_maximum_suppression(
         self, matches: List[Dict[str, Any]], width: int, height: int
@@ -438,141 +716,177 @@ class FindObjectsUseCase:
 
         Args:
             matches: List of match dictionaries
-            width: Width of the detected object
-            height: Height of the detected object
+            width: Width of the template
+            height: Height of the template
 
         Returns:
-            Filtered list of matches
+            Filtered list of match dictionaries
         """
         if not matches:
             return []
 
-        # Sort matches by confidence (descending)
+        if self.debug_mode:
+            self.logger.debug(
+                f"Applying non-maximum suppression to {len(matches)} matches"
+            )
+
+        # If only one match, return it directly
+        if len(matches) == 1:
+            if self.debug_mode:
+                self.logger.debug("Only one match found, skipping NMS")
+            return matches
+
+        # Sort matches by confidence (highest first)
         matches = sorted(matches, key=lambda x: x["confidence"], reverse=True)
 
-        # Initialize list of picked matches
-        picked = []
+        # Prepare pick list and suppressed flags
+        pick = []
+        suppressed = [False] * len(matches)
 
-        # Extract coordinates
-        x1_values = [m["position"][0] for m in matches]
-        y1_values = [m["position"][1] for m in matches]
-        x2_values = [m["position"][0] + width for m in matches]
-        y2_values = [m["position"][1] + height for m in matches]
+        # Threshold for suppression
+        nms_threshold = self.config.get("nms_threshold", 0.3)
 
-        # Compute areas
-        areas = [width * height] * len(matches)
+        # For each match
+        for i in range(len(matches)):
+            # Skip if already suppressed
+            if suppressed[i]:
+                continue
 
-        # Process matches
-        indices = list(range(len(matches)))
+            # Add to picked matches
+            pick.append(i)
 
-        while indices:
-            # Pick the match with highest confidence
-            current = indices[0]
-            picked.append(matches[current])
+            # Get coordinates of current match
+            x1_i = matches[i]["location"][0]
+            y1_i = matches[i]["location"][1]
+            x2_i = x1_i + width
+            y2_i = y1_i + height
+            area_i = width * height
 
-            # Find remaining indices
-            indices_to_keep = []
-
-            for idx in indices[1:]:
-                # Calculate intersection
-                xx1 = max(x1_values[current], x1_values[idx])
-                yy1 = max(y1_values[current], y1_values[idx])
-                xx2 = min(x2_values[current], x2_values[idx])
-                yy2 = min(y2_values[current], y2_values[idx])
-
-                # Check if there is an intersection
-                width_intersection = max(0, xx2 - xx1)
-                height_intersection = max(0, yy2 - yy1)
-
-                if width_intersection == 0 or height_intersection == 0:
-                    indices_to_keep.append(idx)
+            # Compare with all other matches
+            for j in range(i + 1, len(matches)):
+                # Skip if already suppressed
+                if suppressed[j]:
                     continue
 
-                # Calculate intersection area
-                intersection_area = width_intersection * height_intersection
+                # Get coordinates of compared match
+                x1_j = matches[j]["location"][0]
+                y1_j = matches[j]["location"][1]
+                x2_j = x1_j + width
+                y2_j = y1_j + height
+                area_j = width * height
 
-                # Calculate IoU
-                iou = intersection_area / (
-                    areas[current] + areas[idx] - intersection_area
-                )
+                # Calculate intersection
+                xx1 = max(x1_i, x1_j)
+                yy1 = max(y1_i, y1_j)
+                xx2 = min(x2_i, x2_j)
+                yy2 = min(y2_i, y2_j)
 
-                # If IoU is less than threshold, keep the match
-                if iou < self.config.get("nms_threshold", 0.3):
-                    indices_to_keep.append(idx)
+                # Check if there's an intersection
+                w = max(0, xx2 - xx1 + 1)
+                h = max(0, yy2 - yy1 + 1)
 
-            indices = indices_to_keep
+                if w > 0 and h > 0:
+                    # Calculate intersection area
+                    intersection = w * h
 
-        return picked
+                    # Calculate IoU
+                    iou = intersection / float(area_i + area_j - intersection)
+
+                    # Suppress if IoU is above threshold
+                    if iou > nms_threshold:
+                        suppressed[j] = True
+
+        # Return filtered matches
+        filtered_matches = [matches[i] for i in pick]
+
+        if self.debug_mode:
+            self.logger.debug(
+                f"Non-maximum suppression kept {len(filtered_matches)} of {len(matches)} matches"
+            )
+
+        return filtered_matches
 
     def _merge_and_filter_objects(
         self, objects1: List[Any], objects2: List[Any]
     ) -> List[Any]:
         """
-        Merge and filter objects from different detection methods.
+        Merge two sets of objects and remove duplicates.
 
         Args:
             objects1: First list of objects
             objects2: Second list of objects
 
         Returns:
-            Merged and filtered list of objects
+            Merged list with duplicates removed
         """
-        # Combine all objects
-        all_objects = objects1 + objects2
+        if not objects1 and not objects2:
+            return []
 
-        # Sort by confidence
-        all_objects.sort(key=lambda obj: obj.confidence, reverse=True)
+        if self.debug_mode:
+            self.logger.debug(
+                f"Merging object lists: {len(objects1)} and {len(objects2)} objects"
+            )
 
-        # Filter out overlapping objects (similar to NMS)
-        filtered_objects = []
+        # Merge the two lists
+        all_objects = objects1.copy()
 
-        for obj in all_objects:
-            # If we haven't added any objects yet, add the first one
-            if not filtered_objects:
-                filtered_objects.append(obj)
-                continue
+        # Keep track of which objects from list 2 are duplicates
+        duplicate_indices = []
 
-            # Check for overlaps with existing objects
-            is_overlapping = False
-            for existing_obj in filtered_objects:
-                if self._calculate_iou(obj, existing_obj) > self.config.get(
-                    "nms_threshold", 0.3
-                ):
-                    is_overlapping = True
+        # Add objects from list 2 that don't overlap with list 1
+        for i, obj2 in enumerate(objects2):
+            is_duplicate = False
+
+            for obj1 in objects1:
+                iou = self._calculate_iou(obj1, obj2)
+
+                if iou > self.config.get("duplicate_iou_threshold", 0.3):
+                    is_duplicate = True
                     break
 
-            # If no significant overlap, add the object
-            if not is_overlapping:
-                filtered_objects.append(obj)
+            if not is_duplicate:
+                all_objects.append(obj2)
+            else:
+                duplicate_indices.append(i)
 
-        return filtered_objects
+        if self.debug_mode:
+            self.logger.debug(
+                f"Found {len(duplicate_indices)} duplicates between the two lists"
+            )
+            self.logger.debug(f"Final merged list contains {len(all_objects)} objects")
+
+        return all_objects
 
     def _calculate_iou(self, obj1: Any, obj2: Any) -> float:
         """
-        Calculate Intersection over Union (IoU) between two objects.
+        Calculate Intersection over Union between two objects.
 
         Args:
             obj1: First object
             obj2: Second object
 
         Returns:
-            IoU value (0 to 1)
+            IoU value between 0 and 1
         """
-        # Extract bounding box coordinates
-        x1_1, y1_1 = obj1.top_left.x, obj1.top_left.y
-        x2_1, y2_1 = x1_1 + obj1.size.width, y1_1 + obj1.size.height
+        # Extract coordinates
+        x1_1 = obj1.top_left.x
+        y1_1 = obj1.top_left.y
+        x2_1 = x1_1 + obj1.size.width
+        y2_1 = y1_1 + obj1.size.height
 
-        x1_2, y1_2 = obj2.top_left.x, obj2.top_left.y
-        x2_2, y2_2 = x1_2 + obj2.size.width, y1_2 + obj2.size.height
+        x1_2 = obj2.top_left.x
+        y1_2 = obj2.top_left.y
+        x2_2 = x1_2 + obj2.size.width
+        y2_2 = y1_2 + obj2.size.height
 
-        # Calculate intersection coordinates
+        # Calculate intersection
         x1_i = max(x1_1, x1_2)
         y1_i = max(y1_1, y1_2)
         x2_i = min(x2_1, x2_2)
         y2_i = min(y2_1, y2_2)
 
         # Check if there is an intersection
-        if x2_i <= x1_i or y2_i <= y1_i:
+        if x1_i >= x2_i or y1_i >= y2_i:
             return 0.0
 
         # Calculate areas
@@ -581,4 +895,6 @@ class FindObjectsUseCase:
         area2 = obj2.size.width * obj2.size.height
 
         # Calculate IoU
-        return intersection_area / (area1 + area2 - intersection_area)
+        iou = intersection_area / (area1 + area2 - intersection_area)
+
+        return iou
