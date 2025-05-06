@@ -23,8 +23,8 @@ class FindObjectsUseCase:
     This implements the algorithm described in the project documentation:
     1. Preprocess the input image
     2. Prepare reference templates
-    3. Find objects using template matching
-    4. Find objects using contour analysis
+    3. Find objects using ORB feature detection and matching
+    4. Find objects using template matching as fallback
     5. Postprocess and refine results
     6. Mark and classify objects
     """
@@ -91,19 +91,187 @@ class FindObjectsUseCase:
             self.window_repository.get_all_templates()
         )
 
-        # Step 3: Detect objects using template matching
+        # Step 3: Detect objects using ORB feature matching (rotation invariant)
+        orb_doors, orb_windows = self._detect_objects_by_orb(
+            image, door_templates, window_templates
+        )
+
+        # Step 4: As a fallback, use template matching
         template_doors, template_windows = self._detect_objects_by_template_matching(
             image, door_templates, window_templates
         )
 
-        # Step 4: Detect objects using contour analysis
-        contour_doors, contour_windows = self._detect_objects_by_contour_analysis(image)
-
         # Step 5: Merge results and remove duplicates
-        all_doors = self._merge_and_filter_objects(template_doors, contour_doors)
-        all_windows = self._merge_and_filter_objects(template_windows, contour_windows)
+        all_doors = self._merge_and_filter_objects(orb_doors, template_doors)
+        all_windows = self._merge_and_filter_objects(orb_windows, template_windows)
 
         return DetectedObjects(doors=all_doors, windows=all_windows)
+
+    def _detect_objects_by_orb(
+        self,
+        image_dict: Dict[str, np.ndarray],
+        door_templates: List[Dict[str, Any]],
+        window_templates: List[Dict[str, Any]],
+    ) -> Tuple[List[Door], List[Window]]:
+        """
+        Detect objects using ORB feature detection and matching.
+        This method is invariant to rotation, making it suitable for detecting
+        doors and windows regardless of their orientation.
+
+        Args:
+            image_dict: Dictionary with preprocessed images
+            door_templates: List of door templates
+            window_templates: List of window templates
+
+        Returns:
+            Tuple of (door list, window list)
+        """
+        gray_image = image_dict["gray"]
+        doors = []
+        windows = []
+
+        # Initialize ORB detector
+        orb = cv2.ORB_create(
+            nfeatures=self.config.get("orb_features", 1000),
+            scaleFactor=self.config.get("orb_scale_factor", 1.2),
+            nlevels=self.config.get("orb_levels", 8),
+        )
+
+        # Initialize the feature matcher
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+
+        # Detect keypoints and compute descriptors for the input image
+        kp_image, des_image = orb.detectAndCompute(gray_image, None)
+
+        # If no keypoints found in the image, return empty results
+        if des_image is None or len(des_image) == 0:
+            return doors, windows
+
+        # Process door templates
+        doors = self._process_templates_with_orb(
+            orb, bf, gray_image, kp_image, des_image, door_templates, True
+        )
+
+        # Process window templates
+        windows = self._process_templates_with_orb(
+            orb, bf, gray_image, kp_image, des_image, window_templates, False
+        )
+
+        return doors, windows
+
+    def _process_templates_with_orb(
+        self,
+        orb,
+        matcher,
+        image: np.ndarray,
+        kp_image,
+        des_image,
+        templates: List[Dict[str, Any]],
+        is_door: bool,
+    ) -> List[Any]:
+        """
+        Process a list of templates using ORB feature matching.
+
+        Args:
+            orb: ORB detector
+            matcher: Feature matcher
+            image: Grayscale input image
+            kp_image: Keypoints from the input image
+            des_image: Descriptors from the input image
+            templates: List of templates to process
+            is_door: Flag indicating if processing doors (True) or windows (False)
+
+        Returns:
+            List of detected objects (Door or Window)
+        """
+        detected_objects = []
+        min_matches = self.config.get("orb_min_matches", 10)
+        match_ratio = self.config.get("orb_match_ratio", 0.75)
+
+        for template in templates:
+            template_img = template["image"]
+
+            # Detect keypoints and compute descriptors for the template
+            kp_template, des_template = orb.detectAndCompute(template_img, None)
+
+            # Skip if no keypoints found in template
+            if des_template is None or len(des_template) == 0:
+                continue
+
+            # Match descriptors
+            matches = matcher.match(des_template, des_image)
+
+            # Sort matches by distance
+            matches = sorted(matches, key=lambda x: x.distance)
+
+            # Apply ratio test to filter good matches
+            good_matches = [
+                m
+                for m in matches
+                if m.distance < match_ratio * np.mean([m.distance for m in matches])
+            ]
+
+            # If we have enough good matches
+            if len(good_matches) >= min_matches:
+                # Extract matched keypoints
+                template_pts = np.float32(
+                    [kp_template[m.queryIdx].pt for m in good_matches]
+                )
+                image_pts = np.float32([kp_image[m.trainIdx].pt for m in good_matches])
+
+                # Find homography matrix
+                H, mask = cv2.findHomography(template_pts, image_pts, cv2.RANSAC, 5.0)
+
+                if H is not None:
+                    # Get the corners of the template
+                    h, w = template_img.shape
+                    template_corners = np.float32(
+                        [[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]
+                    ).reshape(-1, 1, 2)
+
+                    # Transform corners to image coordinates
+                    transformed_corners = cv2.perspectiveTransform(template_corners, H)
+
+                    # Get bounding box
+                    x_values = [pt[0][0] for pt in transformed_corners]
+                    y_values = [pt[0][1] for pt in transformed_corners]
+
+                    x_min, x_max = int(min(x_values)), int(max(x_values))
+                    y_min, y_max = int(min(y_values)), int(max(y_values))
+
+                    width = x_max - x_min
+                    height = y_max - y_min
+
+                    # Filter out unlikely detections based on size
+                    if width > 0 and height > 0:
+                        if is_door:
+                            obj = Door(
+                                object_id=str(uuid.uuid4()),
+                                object_type=None,  # Will be set by __post_init__
+                                top_left=Coordinates(x=x_min, y=y_min),
+                                size=Size(width=width, height=height),
+                                confidence=(
+                                    len(good_matches) / len(kp_template)
+                                    if len(kp_template) > 0
+                                    else 0.5
+                                ),
+                            )
+                        else:
+                            obj = Window(
+                                object_id=str(uuid.uuid4()),
+                                object_type=None,  # Will be set by __post_init__
+                                top_left=Coordinates(x=x_min, y=y_min),
+                                size=Size(width=width, height=height),
+                                confidence=(
+                                    len(good_matches) / len(kp_template)
+                                    if len(kp_template) > 0
+                                    else 0.5
+                                ),
+                            )
+
+                        detected_objects.append(obj)
+
+        return detected_objects
 
     def _load_and_preprocess_image(self, image_path: Path) -> Dict[str, np.ndarray]:
         """
@@ -328,122 +496,6 @@ class FindObjectsUseCase:
             indices = indices_to_keep
 
         return picked
-
-    def _detect_objects_by_contour_analysis(
-        self, image_dict: Dict[str, np.ndarray]
-    ) -> Tuple[List[Door], List[Window]]:
-        """
-        Detect objects by analyzing contours in the image.
-
-        Args:
-            image_dict: Dictionary with preprocessed images
-
-        Returns:
-            Tuple of (door list, window list)
-        """
-        binary_image = image_dict["morphed"]
-        original_image = image_dict["original"]
-
-        # Find contours
-        contours, _ = cv2.findContours(
-            binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        doors = []
-        windows = []
-
-        min_area = self.config.get("min_contour_area", 100)
-        max_area = self.config.get("max_contour_area", 10000)
-
-        for contour in contours:
-            # Calculate contour area and filter by size
-            area = cv2.contourArea(contour)
-            if area < min_area or area > max_area:
-                continue
-
-            # Get bounding rectangle
-            x, y, w, h = cv2.boundingRect(contour)
-
-            # Analyze shape to classify as door or window
-            aspect_ratio = float(w) / h if h > 0 else 0
-
-            # Create object with appropriate type
-            if self._is_likely_door(contour, aspect_ratio):
-                door = Door(
-                    object_id=str(uuid.uuid4()),
-                    object_type=None,  # Will be set by __post_init__
-                    top_left=Coordinates(x=x, y=y),
-                    size=Size(width=w, height=h),
-                    confidence=0.7,  # Default confidence for contour method
-                )
-                doors.append(door)
-            elif self._is_likely_window(contour, aspect_ratio):
-                window = Window(
-                    object_id=str(uuid.uuid4()),
-                    object_type=None,  # Will be set by __post_init__
-                    top_left=Coordinates(x=x, y=y),
-                    size=Size(width=w, height=h),
-                    confidence=0.7,  # Default confidence for contour method
-                )
-                windows.append(window)
-
-        return doors, windows
-
-    def _is_likely_door(self, contour: np.ndarray, aspect_ratio: float) -> bool:
-        """
-        Determine if a contour is likely to be a door based on shape analysis.
-
-        Args:
-            contour: Contour to analyze
-            aspect_ratio: Width to height ratio
-
-        Returns:
-            True if the contour is likely a door, False otherwise
-        """
-        # Doors typically have aspect ratios around 0.5 (taller than wide)
-        # and are relatively rectangular
-        if 0.2 <= aspect_ratio <= 0.8:
-            # Check rectangularity
-            rect_area = cv2.contourArea(contour)
-            x, y, w, h = cv2.boundingRect(contour)
-            bounding_rect_area = w * h
-
-            if bounding_rect_area > 0:
-                rectangularity = rect_area / bounding_rect_area
-
-                # Doors are typically rectangular (high rectangularity)
-                if rectangularity > 0.7:
-                    return True
-
-        return False
-
-    def _is_likely_window(self, contour: np.ndarray, aspect_ratio: float) -> bool:
-        """
-        Determine if a contour is likely to be a window based on shape analysis.
-
-        Args:
-            contour: Contour to analyze
-            aspect_ratio: Width to height ratio
-
-        Returns:
-            True if the contour is likely a window, False otherwise
-        """
-        # Windows typically have aspect ratios closer to 1 or wider
-        # and are also rectangular
-        if 0.8 <= aspect_ratio <= 2.5:
-            # Check rectangularity
-            rect_area = cv2.contourArea(contour)
-            x, y, w, h = cv2.boundingRect(contour)
-            bounding_rect_area = w * h
-
-            if bounding_rect_area > 0:
-                rectangularity = rect_area / bounding_rect_area
-
-                # Windows are typically rectangular (high rectangularity)
-                if rectangularity > 0.7:
-                    return True
-
-        return False
 
     def _merge_and_filter_objects(
         self, objects1: List[Any], objects2: List[Any]

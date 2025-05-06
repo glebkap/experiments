@@ -87,6 +87,26 @@ def main():
         help="Threshold for template matching (0.0-1.0)",
     )
 
+    # ORB algorithm parameters
+    parser.add_argument(
+        "--orb-features",
+        type=int,
+        default=1000,
+        help="Maximum number of features for ORB detector",
+    )
+    parser.add_argument(
+        "--orb-min-matches",
+        type=int,
+        default=10,
+        help="Minimum number of good ORB matches to consider an object",
+    )
+    parser.add_argument(
+        "--orb-match-ratio",
+        type=float,
+        default=0.75,
+        help="Ratio for filtering good ORB matches (0.0-1.0)",
+    )
+
     args = parser.parse_args()
 
     # Prepare paths
@@ -96,7 +116,12 @@ def main():
 
     # Prepare configuration
     config = {
+        # Template matching parameters
         "template_matching_threshold": args.template_threshold,
+        # ORB parameters
+        "orb_features": args.orb_features,
+        "orb_min_matches": args.orb_min_matches,
+        "orb_match_ratio": args.orb_match_ratio,
     }
 
     # Process the plan
