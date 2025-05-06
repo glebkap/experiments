@@ -20,7 +20,7 @@ cd find_door_and_window
 
 2. Установите зависимости:
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
 ## Структура проекта
@@ -41,7 +41,7 @@ pip install -r requirements.txt
 Для обработки плана здания выполните:
 
 ```bash
-python main.py --image <путь_к_изображению> --data-dir <путь_к_директории_данных> --output-dir <путь_к_директории_вывода>
+python3 main.py --image <путь_к_изображению> --data-dir <путь_к_директории_данных> --output-dir <путь_к_директории_вывода>
 ```
 
 ### Основные параметры:
@@ -59,7 +59,7 @@ python main.py --image <путь_к_изображению> --data-dir <путь
 
 ### Пример:
 ```bash
-python main.py --image ./data/plans/building_1.png --data-dir ./data --output-dir ./results --orb-features 1500 --orb-min-matches 8
+python3 main.py --image ./data/plans/building_1.png --data-dir ./data --output-dir ./results --orb-features 1500 --orb-min-matches 8
 ```
 
 ## Алгоритм
