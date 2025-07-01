@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FFmpeg WASM Video Player</title>
+    <title>H.265 HLS Player с libde265</title>
     <style>
         * {
             margin: 0;
@@ -331,14 +331,15 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎬 FFmpeg WASM Video Player</h1>
-            <p>Универсальный плеер на основе FFmpeg WASM для воспроизведения любых форматов видео</p>
+            <h1>🎬 H.265 HLS Player</h1>
+            <p>Плеер для воспроизведения HLS плейлистов с H.265 на основе libde265 и hls.js</p>
         </div>
 
         <div class="player-container">
             <div class="input-section">
-                <label for="videoUrl">URL видео для загрузки:</label>
-                <input type="url" id="videoUrl" class="url-input" placeholder="https://example.com/video.mp4" value="">
+                <label for="videoUrl">URL HLS плейлиста (M3U8) с H.265:</label>
+                <input type="url" id="videoUrl" class="url-input" placeholder="https://example.com/playlist.m3u8"
+                    value="">
             </div>
 
             <div class="controls">
@@ -373,8 +374,8 @@
                         <span id="playerStatus">Готов к загрузке</span>
                     </div>
                     <div class="status-item">
-                        <h4>FFmpeg WASM</h4>
-                        <span id="ffmpegStatus">Инициализация...</span>
+                        <h4>libde265 декодер</h4>
+                        <span id="decoderStatus">Инициализация...</span>
                     </div>
                     <div class="status-item">
                         <h4>Формат видео</h4>
@@ -397,7 +398,14 @@
         </div>
     </div>
 
-    <!-- FFmpeg WASM -->
+    <!-- HLS.js библиотека -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.0/dist/hls.min.js"></script>
+    <!-- libde265.js библиотека -->
+    <script src="https://cdn.jsdelivr.net/gh/strukturag/libde265.js@master/lib/libde265.js"></script>
+    <!-- goldvideo H.265 player для fallback -->
+    <link rel="stylesheet" href="node_modules/goldvideo-player/dist/goldplay-h265.css">
+    <script src="node_modules/goldvideo-player/dist/goldplay-h265-sdk.js"></script>
+    <!-- Основной скрипт плеера -->
     <script type="module" src="script.js"></script>
 </body>
 

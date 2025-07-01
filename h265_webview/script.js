@@ -1,20 +1,18 @@
-import { FFmpeg } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
-import { toBlobURL } from 'https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js';
-
-class VideoPlayer {
+class H265HLSPlayer {
     constructor() {
-        this.ffmpeg = new FFmpeg();
+        this.hls = null;
+        this.goldPlayer = null;
+        this.useGoldPlayer = false;
         this.isLoaded = false;
-        this.currentVideo = null;
         this.isPlaying = false;
         this.isMuted = false;
         this.currentSource = '';
         this.videoFormat = '';
+        this.hasH265Support = false;
+        this.hasGoldPlayerSupport = false;
         
         // DOM элементы
         this.videoPlayer = document.getElementById('videoPlayer');
-        this.videoCanvas = document.getElementById('videoCanvas');
-        this.canvasWrapper = document.getElementById('canvasWrapper');
         this.playPauseBtn = document.getElementById('playPauseBtn');
         this.stopBtn = document.getElementById('stopBtn');
         this.muteBtn = document.getElementById('muteBtn');
@@ -24,7 +22,7 @@ class VideoPlayer {
         
         // Статус элементы
         this.playerStatus = document.getElementById('playerStatus');
-        this.ffmpegStatus = document.getElementById('ffmpegStatus');
+        this.decoderStatus = document.getElementById('decoderStatus');
         this.videoFormatEl = document.getElementById('videoFormat');
         this.currentSourceEl = document.getElementById('currentSource');
         this.logOutput = document.getElementById('logOutput');
@@ -36,87 +34,266 @@ class VideoPlayer {
     
     async init() {
         try {
-            this.log('Инициализация FFmpeg WASM...', 'info');
-            this.updateFFmpegStatus('Загрузка...');
+            this.log('Инициализация H.265 HLS плеера...', 'info');
+            this.updateDecoderStatus('Проверка поддержки...');
             
-            // Настраиваем event listeners для FFmpeg
-            this.ffmpeg.on('log', ({ message }) => {
-                this.log(`FFmpeg: ${message}`, 'info');
-            });
+            // Проверяем нативную поддержку H.265
+            this.checkH265Support();
             
-            this.ffmpeg.on('progress', ({ progress }) => {
-                if (progress > 0) {
-                    this.updateProgress(progress * 100);
-                }
-            });
+            // Проверяем поддержку goldvideo player
+            this.checkGoldPlayerSupport();
             
-            // Пробуем различные стратегии инициализации
-            await this.initWithMultipleStrategies();
+            // Проверяем поддержку HLS.js
+            if (Hls.isSupported()) {
+                this.log('HLS.js поддерживается', 'success');
+                this.initHLS();
+            } else if (this.videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+                this.log('Нативная поддержка HLS в Safari', 'info');
+            } else {
+                throw new Error('HLS не поддерживается в этом браузере');
+            }
+            
+            this.isLoaded = true;
+            
+            // Определяем статус декодера
+            let decoderStatus = '';
+            if (this.hasH265Support) {
+                decoderStatus = 'H.265 поддерживается (нативно)';
+            } else if (this.hasGoldPlayerSupport) {
+                decoderStatus = 'H.265 поддерживается (goldvideo)';
+            } else {
+                decoderStatus = 'Только H.264';
+            }
+            
+            this.updateDecoderStatus(decoderStatus);
+            this.log('H.265 HLS плеер успешно инициализирован', 'success');
             
         } catch (error) {
-            this.log(`Критическая ошибка инициализации FFmpeg: ${error}`, 'error');
-            this.updateFFmpegStatus('Критическая ошибка');
-            
-            // Пробуем запустить без FFmpeg (только для нативно поддерживаемых форматов)
-            this.log('Переходим в режим "только нативные форматы"', 'warn');
-            this.isLoaded = false;
-            this.updateFFmpegStatus('Только нативные форматы');
+            this.log(`Критическая ошибка инициализации: ${error}`, 'error');
+            this.updateDecoderStatus('Ошибка');
         }
     }
     
-    async initWithMultipleStrategies() {
-        const strategies = [
-            () => this.initWithMainCDN(),
-            () => this.initWithoutWorker()
+    checkH265Support() {
+        const video = document.createElement('video');
+        
+        // Проверяем различные форматы H.265/HEVC
+        const h265Codecs = [
+            'video/mp4; codecs="hev1.1.6.L93.B0"',
+            'video/mp4; codecs="hvc1.1.6.L93.B0"',
+            'video/mp4; codecs="hev1"',
+            'video/mp4; codecs="hvc1"'
         ];
         
-        for (let i = 0; i < strategies.length; i++) {
-            try {
-                this.log(`Пробуем стратегию инициализации ${i + 1}/${strategies.length}...`, 'info');
-                await strategies[i]();
-                this.isLoaded = true;
-                this.updateFFmpegStatus('Готов');
-                this.log('FFmpeg WASM успешно инициализирован', 'success');
-                return;
-            } catch (error) {
-                this.log(`Стратегия ${i + 1} не удалась: ${error}`, 'warn');
-                if (i === strategies.length - 1) {
-                    throw error;
-                }
+        for (const codec of h265Codecs) {
+            const support = video.canPlayType(codec);
+            if (support === 'probably' || support === 'maybe') {
+                this.hasH265Support = true;
+                this.log(`H.265 поддержка обнаружена: ${codec} (${support})`, 'success');
+                break;
             }
+        }
+        
+        if (!this.hasH265Support) {
+            this.log('Нативная поддержка H.265 не найдена', 'warn');
+            this.log('Плеер будет работать с H.264 контентом', 'info');
         }
     }
     
-    async initWithMainCDN() {
-        this.log('Попытка загрузки с основного CDN (unpkg.com)...', 'info');
-        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd';
+    checkGoldPlayerSupport() {
+        try {
+            // Проверяем доступность goldvideo player
+            if (typeof GoldPlay !== 'undefined') {
+                this.hasGoldPlayerSupport = true;
+                this.log('goldvideo H.265 player доступен как fallback', 'success');
+                
+                // Если нет нативной поддержки H.265, используем goldvideo как fallback
+                if (!this.hasH265Support) {
+                    this.useGoldPlayer = true;
+                    this.log('Будет использоваться goldvideo player для H.265 контента', 'info');
+                }
+            } else {
+                this.log('goldvideo player не найден', 'warn');
+                this.hasGoldPlayerSupport = false;
+            }
+        } catch (error) {
+            this.log(`Ошибка проверки goldvideo player: ${error}`, 'error');
+            this.hasGoldPlayerSupport = false;
+        }
+    }
+    
+    initHLS() {
+        this.hls = new Hls({
+            debug: false,
+            enableWorker: true,
+            lowLatencyMode: false,
+            backBufferLength: 90,
+            maxBufferLength: 30,
+            maxMaxBufferLength: 600,
+            capLevelToPlayerSize: true,
+            startPosition: -1,
+            enableSoftwareAES: true
+        });
         
-        await this.ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-            workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
+        this.setupHLSEvents();
+        this.log('HLS.js инициализирован', 'success');
+    }
+    
+    initGoldPlayer() {
+        try {
+            if (!this.hasGoldPlayerSupport) {
+                throw new Error('goldvideo player не доступен');
+            }
+            
+            // Скрываем стандартный video элемент
+            this.videoPlayer.style.display = 'none';
+            
+            // Показываем canvas для goldvideo player
+            const canvasWrapper = document.getElementById('canvasWrapper');
+            const canvas = document.getElementById('videoCanvas');
+            canvasWrapper.style.display = 'block';
+            
+            this.log('goldvideo player инициализирован', 'success');
+            return true;
+            
+        } catch (error) {
+            this.log(`Ошибка инициализации goldvideo player: ${error}`, 'error');
+            return false;
+        }
+    }
+    
+    setupHLSEvents() {
+        if (!this.hls) return;
+        
+        this.hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+            this.log('HLS медиа прикреплено', 'info');
+        });
+        
+        this.hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+            this.log(`HLS манифест загружен. Уровней: ${data.levels.length}`, 'info');
+            
+            // Анализируем доступные кодеки
+            const levels = data.levels;
+            let hasH265 = false;
+            let hasH264 = false;
+            
+            levels.forEach((level, index) => {
+                const videoCodec = level.videoCodec ? level.videoCodec.toLowerCase() : '';
+                this.log(`Уровень ${index}: ${level.width}x${level.height}, битрейт: ${level.bitrate}, кодек: ${level.videoCodec}`, 'info');
+                
+                if (videoCodec.includes('hvc1') || videoCodec.includes('hev1')) {
+                    hasH265 = true;
+                } else if (videoCodec.includes('avc1')) {
+                    hasH264 = true;
+                }
+            });
+            
+            // Определяем стратегию воспроизведения
+            if (hasH265 && this.hasH265Support) {
+                this.videoFormat = 'HLS (H.265 - поддерживается)';
+                this.log('Используется H.265 с нативной поддержкой браузера', 'success');
+            } else if (hasH265 && !this.hasH265Support) {
+                this.videoFormat = 'HLS (H.265 - ограниченная поддержка)';
+                this.log('H.265 контент - возможны проблемы воспроизведения', 'warn');
+            } else if (hasH264) {
+                this.videoFormat = 'HLS (H.264)';
+                this.log('Используется H.264 контент', 'info');
+            } else {
+                this.videoFormat = 'HLS (неизвестный кодек)';
+            }
+            
+            this.updateVideoFormat(this.videoFormat);
+            this.enableControls();
+        });
+        
+        this.hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+            const level = this.hls.levels[data.level];
+            this.log(`Переключен на уровень ${data.level}: ${level.width}x${level.height}`, 'info');
+        });
+        
+        this.hls.on(Hls.Events.FRAG_LOADED, (event, data) => {
+            this.log(`Фрагмент загружен: #${data.frag.sn}`, 'info');
+        });
+        
+        // Обработка ошибок HLS
+        this.hls.on(Hls.Events.ERROR, (event, data) => {
+            this.log(`HLS ошибка: ${data.type} - ${data.details}`, data.fatal ? 'error' : 'warn');
+            
+            if (data.fatal) {
+                switch(data.type) {
+                    case Hls.ErrorTypes.NETWORK_ERROR:
+                        this.log('Критическая сетевая ошибка, попытка восстановления...', 'error');
+                        this.hls.startLoad();
+                        break;
+                        
+                    case Hls.ErrorTypes.MEDIA_ERROR:
+                        this.log('Критическая медиа ошибка, попытка восстановления...', 'error');
+                        
+                        // Обработка ошибок кодеков
+                        if (data.details === 'bufferAddCodecError' || 
+                            data.details === 'bufferIncompatibleCodecsError' ||
+                            data.details === 'bufferAppendError') {
+                            
+                            this.handleCodecError(data);
+                        } else {
+                            this.hls.recoverMediaError();
+                        }
+                        break;
+                        
+                    default:
+                        this.log(`Критическая ошибка HLS: ${data.details}`, 'error');
+                        this.handleFatalError();
+                        break;
+                }
+            }
         });
     }
     
-    
-    
-    async initWithoutWorker() {
-        this.log('Попытка загрузки без worker (single-threaded версия)...', 'info');
-        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm';
-    
-        await this.ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-        });
+    handleCodecError(errorData) {
+        this.log('Обнаружена ошибка кодека - возможно H.265 не поддерживается', 'error');
         
-        this.log('FFmpeg WASM инициализирован в однопоточном режиме', 'success');
+        if (!this.hasH265Support) {
+            this.log('H.265 не поддерживается этим браузером', 'error');
+            this.updatePlayerStatus('Ошибка: H.265 не поддерживается');
+            this.suggestAlternatives();
+        } else {
+            this.log('Попытка восстановления...', 'info');
+            this.hls.recoverMediaError();
+        }
     }
     
+    suggestAlternatives() {
+        this.log('Рекомендации для решения проблемы:', 'info');
+        this.log('1. Попробуйте H.264 HLS поток', 'info');
+        this.log('2. Используйте Safari для лучшей поддержки H.265', 'info');
+        this.log('3. Проверьте что манифест содержит совместимые кодеки', 'info');
+        
+        // Примеры рабочих потоков
+        const examples = [
+            'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8 (H.264)',
+            'https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8 (H.264)'
+        ];
+        
+        this.log('Примеры совместимых потоков:', 'info');
+        examples.forEach(url => this.log(url, 'info'));
+    }
+    
+    handleFatalError() {
+        this.log('Критическая ошибка HLS', 'error');
+        this.updatePlayerStatus('Критическая ошибка');
+        this.disableControls();
+        
+        if (this.hls) {
+            this.hls.destroy();
+            this.hls = null;
+        }
+    }
 
     setupEventListeners() {
-        // Обработчики для video элемента
+        // Обработчики video элемента
         this.videoPlayer.addEventListener('loadedmetadata', () => {
             this.log('Метаданные видео загружены', 'info');
+            this.log(`Разрешение: ${this.videoPlayer.videoWidth}x${this.videoPlayer.videoHeight}`, 'info');
             this.enableControls();
             this.progressContainer.style.display = 'block';
         });
@@ -135,19 +312,32 @@ class VideoPlayer {
         });
         
         this.videoPlayer.addEventListener('error', (e) => {
-            this.log(`Ошибка воспроизведения: ${e.message}`, 'error');
+            const error = e.target.error;
+            if (error) {
+                this.log(`Ошибка video: код ${error.code}`, 'error');
+                
+                switch(error.code) {
+                    case MediaError.MEDIA_ERR_DECODE:
+                        this.log('Ошибка декодирования - возможно неподдерживаемый кодек', 'error');
+                        this.suggestAlternatives();
+                        break;
+                    case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                        this.log('Источник не поддерживается', 'error');
+                        this.suggestAlternatives();
+                        break;
+                    case MediaError.MEDIA_ERR_NETWORK:
+                        this.log('Сетевая ошибка', 'error');
+                        break;
+                }
+            }
         });
         
-      
-        // Обработчик для URL - автоматическая загрузка при вводе
+        // Автозагрузка при вводе URL
         const videoUrlInput = document.getElementById('videoUrl');
         if (videoUrlInput) {
             let timeoutId;
             videoUrlInput.addEventListener('input', () => {
-                // Очищаем предыдущий таймер
                 clearTimeout(timeoutId);
-                
-                // Устанавливаем новый таймер с задержкой 1 секунда
                 timeoutId = setTimeout(() => {
                     const url = videoUrlInput.value.trim();
                     if (url && this.isValidUrl(url)) {
@@ -155,6 +345,11 @@ class VideoPlayer {
                     }
                 }, 1000);
             });
+            
+            // Добавляем пример URL
+            if (!videoUrlInput.value) {
+                videoUrlInput.placeholder = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8';
+            }
         }
     }
     
@@ -165,236 +360,275 @@ class VideoPlayer {
         const videoUrl = document.getElementById('videoUrl').value.trim();
         
         if (!videoUrl) {
-            this.log('Введите URL видео', 'warn');
+            this.log('Введите URL HLS плейлиста', 'warn');
             this.updatePlayerStatus('Ошибка: URL не указан');
             return;
         }
-        
+
         try {
-            await this.loadFromUrl(videoUrl);
+            await this.loadHLSStream(videoUrl);
         } catch (error) {
-            this.log(`Ошибка загрузки видео: ${error}`, 'error');
+            this.log(`Ошибка загрузки: ${error}`, 'error');
             this.updatePlayerStatus('Ошибка загрузки');
         }
     }
     
-
-    
-    async loadFromUrl(url) {
-        this.log(`Загрузка по URL: ${url}`, 'info');
+    async loadHLSStream(url) {
+        this.log(`Загрузка HLS: ${url}`, 'info');
         this.currentSource = url;
-        this.updateCurrentSource(this.currentSource);
+        this.updateCurrentSource(url);
         
         try {
-            // Попробуем загрузить напрямую
-            await this.loadDirectly(url);
-            
-            // Определяем формат по URL
-            const urlParts = url.split('.');
-            const extension = urlParts[urlParts.length - 1].split('?')[0].toLowerCase();
-            this.videoFormat = extension.toUpperCase();
-            this.updateVideoFormat(this.videoFormat);
+            // Сначала проверяем через HLS.js какие кодеки доступны
+            if (this.useGoldPlayer && this.hasGoldPlayerSupport) {
+                await this.loadWithGoldPlayer(url);
+            } else if (Hls.isSupported() && this.hls) {
+                // Очищаем предыдущий источник
+                this.hls.destroy();
+                this.initHLS();
+                
+                this.hls.loadSource(url);
+                this.hls.attachMedia(this.videoPlayer);
+                
+                this.hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+                    this.log('Манифест загружен успешно', 'success');
+                    
+                    // Проверяем наличие H.265 контента
+                    const hasH265Content = this.checkManifestForH265(data);
+                    
+                    if (hasH265Content && !this.hasH265Support && this.hasGoldPlayerSupport) {
+                        this.log('Обнаружен H.265 контент, переключаемся на goldvideo player', 'info');
+                        this.hls.destroy();
+                        this.loadWithGoldPlayer(url);
+                        return;
+                    }
+                    
+                    this.updatePlayerStatus('Готов к воспроизведению');
+                });
+                
+            } else if (this.videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+                // Нативная поддержка Safari
+                this.videoPlayer.src = url;
+                this.updatePlayerStatus('Готов (нативная поддержка)');
+                this.log('Используется нативная поддержка HLS', 'info');
+            }
             
         } catch (error) {
-            this.log('Прямая загрузка не удалась, пробуем через FFmpeg', 'warn');
-            
-            // Проверяем доступность FFmpeg для конвертации
-            if (!this.isLoaded) {
-                const extension = url.split('.').pop().split('?')[0].toLowerCase();
-                if (this.isNativelySupported(extension)) {
-                    throw new Error(`Не удалось загрузить ${extension.toUpperCase()} файл. Возможно проблема с CORS или доступностью файла.`);
-                } else {
-                    throw new Error(`Формат ${extension.toUpperCase()} не поддерживается напрямую браузером, а FFmpeg WASM не загружен. Попробуйте перезагрузить страницу или используйте поддерживаемые форматы: MP4, WebM, OGG.`);
-                }
-            }
-            
-            try {
-                
-                await this.convertAndLoad(url);
-            } catch (fetchError) {
-                if (fetchError.name === 'TypeError' && fetchError.message.includes('CORS')) {
-                    throw new Error('CORS ошибка: Убедитесь что открываете приложение через http://localhost:8000, а не из файловой системы');
-                } else if (fetchError.message.includes('cannot be accessed from origin')) {
-                    throw new Error('CORS ошибка: Запустите CORS сервер (python3 cors_server.py) и откройте http://localhost:8000');
-                }
-                throw fetchError;
-            }
+            this.log(`Ошибка загрузки HLS: ${error}`, 'error');
+            this.updatePlayerStatus('Ошибка загрузки');
         }
     }
     
-    async loadDirectly(url) {
-        return new Promise((resolve, reject) => {
-            const tempVideo = document.createElement('video');
-            tempVideo.addEventListener('loadedmetadata', () => {
-                this.videoPlayer.src = url;
-                this.updatePlayerStatus('Готов к воспроизведению');
-                this.log('Видео успешно загружено', 'success');
-                resolve();
+    checkManifestForH265(data) {
+        const levels = data.levels;
+        let hasH265 = false;
+        
+        levels.forEach(level => {
+            const videoCodec = level.videoCodec ? level.videoCodec.toLowerCase() : '';
+            if (videoCodec.includes('hvc1') || videoCodec.includes('hev1')) {
+                hasH265 = true;
+            }
+        });
+        
+        return hasH265;
+    }
+    
+    async loadWithGoldPlayer(url) {
+        try {
+            this.log('Загрузка с помощью goldvideo player...', 'info');
+            
+            if (!this.initGoldPlayer()) {
+                throw new Error('Не удалось инициализировать goldvideo player');
+            }
+            
+            // Уничтожаем предыдущий экземпляр если есть
+            if (this.goldPlayer) {
+                this.goldPlayer.destroy();
+            }
+            
+            const canvas = document.getElementById('videoCanvas');
+            const audioElement = this.videoPlayer; // Используем существующий audio element
+            
+            // Создаем goldvideo player
+            this.goldPlayer = new GoldPlay(canvas.parentElement, {
+                sourceURL: url,
+                type: 'HLS',
+                libPath: 'https://goldvideo.github.io/h265player/dist/lib',
+                enableSkipFrame: false,
+                bufferTime: 0,
+                isShowStatistics: false
             });
-            tempVideo.addEventListener('error', reject);
-            tempVideo.src = url;
+            
+            // Настраиваем события goldvideo player
+            this.setupGoldPlayerEvents();
+            
+            this.updatePlayerStatus('Готов к воспроизведению (goldvideo)');
+            this.updateVideoFormat('HLS (H.265 - goldvideo player)');
+            this.log('goldvideo player загружен успешно', 'success');
+            
+        } catch (error) {
+            this.log(`Ошибка загрузки goldvideo player: ${error}`, 'error');
+            this.updatePlayerStatus('Ошибка загрузки goldvideo player');
+            
+            // Fallback к обычному HLS.js
+            this.useGoldPlayer = false;
+            this.loadHLSStream(url);
+        }
+    }
+    
+    setupGoldPlayerEvents() {
+        if (!this.goldPlayer) return;
+        
+        // Настраиваем события goldvideo player
+        // Событие готовности плеера
+        this.goldPlayer.on(GoldPlay.Events.READY, () => {
+            this.log('goldvideo player готов', 'success');
+            this.enableControls();
+        });
+        
+        // Событие начала воспроизведения
+        this.goldPlayer.on(GoldPlay.Events.PLAY, () => {
+            this.isPlaying = true;
+            this.updatePlayPauseBtn();
+            this.log('goldvideo воспроизведение запущено', 'info');
+        });
+        
+        // Событие паузы
+        this.goldPlayer.on(GoldPlay.Events.PAUSE, () => {
+            this.isPlaying = false;
+            this.updatePlayPauseBtn();
+            this.log('goldvideo пауза', 'info');
+        });
+        
+        // Событие загрузки
+        this.goldPlayer.on(GoldPlay.Events.LOADSTART, () => {
+            this.log('goldvideo начало загрузки', 'info');
+        });
+        
+        // Событие ошибки
+        this.goldPlayer.on(GoldPlay.Events.ERROR, (error) => {
+            this.log(`goldvideo player ошибка: ${error}`, 'error');
+        });
+        
+        // Событие информации о медиа
+        this.goldPlayer.on(GoldPlay.Events.MEDIAINFO, (event, data) => {
+            this.log(`goldvideo медиа информация: ${JSON.stringify(data)}`, 'info');
         });
     }
     
-    async convertAndLoad(videoURL) {
-        this.log(`Начинаем конвертацию через FFmpeg... ${videoURL}`, 'info');
-        this.updatePlayerStatus('Конвертация...');
-        
-        // Проверяем, что FFmpeg загружен
-        if (!this.isLoaded) {
-            throw new Error('FFmpeg WASM не загружен. Попробуйте перезагрузить страницу или используйте нативно поддерживаемые форматы (MP4, WebM).');
-        }
-        
-        const outputFile = 'output.webm';
-        
-        try {
-            
-            // Конвертируем в WebM (широко поддерживается)
-            this.log('Начинаем конвертацию...', 'info');
-            await this.ffmpeg.exec([
-                
-                '-protocol_whitelist','file,http,https,tcp,tls',
-                '-i', videoURL,
-                '-c:v', 'libvpx-vp9',
-                '-c:a', 'libopus',
-                '-crf', '30',
-                '-b:v', '1M',
-                '-f', 'webm',
-                outputFile
-            ]);
-            
-            // Проверяем, что выходной файл создан
-            this.log('Читаем результат конвертации...', 'info');
-            const data = await this.ffmpeg.readFile(outputFile);
-            
-            if (!data || data.length === 0) {
-                throw new Error('Конвертация не создала выходной файл');
-            }
-            
-            const blob = new Blob([data], { type: 'video/webm' });
-            const url = URL.createObjectURL(blob);
-            
-            await this.loadDirectly(url);
-            
-            this.log('Конвертация завершена успешно', 'success');
-            
-        } catch (error) {
-            this.log(`Детали ошибки конвертации: ${error}`, 'error');
-            
-            if (error.message && error.message.includes('FS error')) {
-                throw new Error('Ошибка файловой системы FFmpeg. Попробуйте перезагрузить страницу или используйте файл меньшего размера.');
-            } else if (error.message && error.message.includes('out of memory')) {
-                throw new Error('Недостаточно памяти для конвертации. Попробуйте файл меньшего размера.');
-            } else {
-                throw new Error(`Ошибка конвертации: ${error.message || error}`);
-            }
-        } finally {
-            // Очищаем временные файлы (независимо от результата)
-            try {
-                await this.ffmpeg.deleteFile(filename);
-                this.log(`Удален временный файл: ${filename}`, 'info');
-            } catch (e) {
-                this.log(`Не удалось удалить файл ${filename}: ${e}`, 'warn');
-            }
-            
-            try {
-                await this.ffmpeg.deleteFile(outputFile);
-                this.log(`Удален выходной файл: ${outputFile}`, 'info');
-            } catch (e) {
-                this.log(`Не удалось удалить файл ${outputFile}: ${e}`, 'warn');
-            }
-        }
-    }
-    
-    isNativelySupported(extension) {
-        const supported = ['mp4', 'webm', 'ogg', 'ogv', 'm4v', 'mov', 'avi'];
-        return supported.includes(extension.toLowerCase());
-    }
-    
-    isValidUrl(string) {
-        try {
-            const url = new URL(string);
-            return url.protocol === 'http:' || url.protocol === 'https:';
-        } catch (_) {
-            return false;
-        }
-    }
-    
     playPause() {
-        this.log(`DEBUG: playPause вызвана. src=${this.videoPlayer.src}, disabled=${this.playPauseBtn.disabled}`, 'info');
-        
-        if (!this.videoPlayer.src) {
-            this.log('Сначала загрузите видео', 'warn');
-            return;
-        }
-        
-        if (this.videoPlayer.paused) {
-            this.videoPlayer.play().then(() => {
+        if (this.useGoldPlayer && this.goldPlayer) {
+            // Используем goldvideo player
+            if (this.isPlaying) {
+                this.goldPlayer.pause();
+                this.isPlaying = false;
+                this.log('Пауза (goldvideo)', 'info');
+            } else {
+                this.goldPlayer.play();
                 this.isPlaying = true;
-                this.log('Воспроизведение начато', 'info');
-                this.updatePlayPauseBtn();
-            }).catch(error => {
-                this.log(`Ошибка воспроизведения: ${error.message}`, 'error');
-            });
+                this.log('Воспроизведение начато (goldvideo)', 'success');
+            }
         } else {
-            this.videoPlayer.pause();
-            this.isPlaying = false;
-            this.log('Воспроизведение приостановлено', 'info');
-            this.updatePlayPauseBtn();
+            // Используем стандартный video элемент
+            if (!this.videoPlayer.src && !this.hls) {
+                this.log('Сначала загрузите видео', 'warn');
+                return;
+            }
+            
+            if (this.isPlaying) {
+                this.videoPlayer.pause();
+                this.isPlaying = false;
+                this.log('Пауза', 'info');
+            } else {
+                this.videoPlayer.play().then(() => {
+                    this.isPlaying = true;
+                    this.log('Воспроизведение начато', 'success');
+                }).catch(error => {
+                    this.log(`Ошибка воспроизведения: ${error.message}`, 'error');
+                    this.isPlaying = false;
+                });
+            }
         }
+        
+        this.updatePlayPauseBtn();
     }
     
     stopVideo() {
-        if (!this.videoPlayer.src) return;
+        if (this.useGoldPlayer && this.goldPlayer) {
+            // Используем goldvideo player
+            this.goldPlayer.pause();
+            this.goldPlayer.currentTime = 0;
+            this.isPlaying = false;
+            this.log('Остановлено (goldvideo)', 'info');
+        } else {
+            // Используем стандартный video элемент
+            this.videoPlayer.pause();
+            this.videoPlayer.currentTime = 0;
+            this.isPlaying = false;
+            this.log('Остановлено', 'info');
+        }
         
-        this.videoPlayer.pause();
-        this.videoPlayer.currentTime = 0;
-        this.isPlaying = false;
         this.updatePlayPauseBtn();
         this.updateProgress(0);
-        this.log('Воспроизведение остановлено', 'info');
     }
     
     toggleMute() {
-        if (!this.videoPlayer.src) return;
+        this.isMuted = !this.isMuted;
         
-        this.videoPlayer.muted = !this.videoPlayer.muted;
-        this.isMuted = this.videoPlayer.muted;
+        if (this.useGoldPlayer && this.goldPlayer) {
+            // Используем goldvideo player
+            this.goldPlayer.muted = this.isMuted;
+            this.log(`Звук ${this.isMuted ? 'выключен' : 'включен'} (goldvideo)`, 'info');
+        } else {
+            // Используем стандартный video элемент
+            this.videoPlayer.muted = this.isMuted;
+            this.log(`Звук ${this.isMuted ? 'выключен' : 'включен'}`, 'info');
+        }
         
-        const muteBtn = document.getElementById('muteBtn');
-        muteBtn.textContent = this.isMuted ? '🔊 Включить звук' : '🔇 Выключить звук';
-        
-        this.log(this.isMuted ? 'Звук выключен' : 'Звук включен', 'info');
+        this.muteBtn.textContent = this.isMuted ? '🔇 Вкл звук' : '🔇 Выкл звук';
     }
     
     async extractFrame() {
-        if (!this.videoPlayer.src) {
-            this.log('Сначала загрузите видео', 'warn');
-            return;
-        }
-        
         try {
-            // Создаем canvas для захвата кадра
+            let sourceCanvas, sourceWidth, sourceHeight;
+            
+            if (this.useGoldPlayer && this.goldPlayer) {
+                // Используем canvas из goldvideo player
+                sourceCanvas = document.getElementById('videoCanvas');
+                if (!sourceCanvas || sourceCanvas.width === 0) {
+                    this.log('goldvideo canvas не готов', 'warn');
+                    return;
+                }
+                sourceWidth = sourceCanvas.width;
+                sourceHeight = sourceCanvas.height;
+                this.log('Извлечение кадра из goldvideo player', 'info');
+            } else {
+                // Используем стандартный video элемент
+                if (!this.videoPlayer.videoWidth) {
+                    this.log('Видео не загружено', 'warn');
+                    return;
+                }
+                sourceWidth = this.videoPlayer.videoWidth;
+                sourceHeight = this.videoPlayer.videoHeight;
+                this.log('Извлечение кадра из video элемента', 'info');
+            }
+            
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             
-            canvas.width = this.videoPlayer.videoWidth;
-            canvas.height = this.videoPlayer.videoHeight;
+            canvas.width = sourceWidth;
+            canvas.height = sourceHeight;
             
-            ctx.drawImage(this.videoPlayer, 0, 0, canvas.width, canvas.height);
+            if (this.useGoldPlayer && this.goldPlayer) {
+                // Копируем данные из canvas goldvideo player
+                const sourceCtx = sourceCanvas.getContext('2d');
+                const imageData = sourceCtx.getImageData(0, 0, sourceWidth, sourceHeight);
+                ctx.putImageData(imageData, 0, 0);
+            } else {
+                // Рисуем из video элемента
+                ctx.drawImage(this.videoPlayer, 0, 0);
+            }
             
-            // Показываем кадр
-            const frameCanvas = document.getElementById('videoCanvas');
-            const frameCtx = frameCanvas.getContext('2d');
-            
-            frameCanvas.width = canvas.width;
-            frameCanvas.height = canvas.height;
-            
-            frameCtx.drawImage(canvas, 0, 0);
-            
-            this.canvasWrapper.style.display = 'block';
-            
-            // Создаем ссылку для скачивания
             canvas.toBlob((blob) => {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -402,16 +636,23 @@ class VideoPlayer {
                 a.download = `frame_${Date.now()}.png`;
                 a.click();
                 URL.revokeObjectURL(url);
+                this.log('Кадр сохранен', 'success');
             });
             
-            this.log('Кадр извлечен и сохранен', 'success');
-            
         } catch (error) {
-            this.log(`Ошибка извлечения кадра: ${error.message}`, 'error');
+            this.log(`Ошибка сохранения кадра: ${error}`, 'error');
         }
     }
     
-    // Утилиты для UI
+    isValidUrl(string) {
+        try {
+            new URL(string);
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+    
     enableControls() {
         this.playPauseBtn.disabled = false;
         this.stopBtn.disabled = false;
@@ -431,59 +672,15 @@ class VideoPlayer {
     }
     
     updateProgress(percentage) {
-        this.progressFill.style.width = `${Math.max(0, Math.min(100, percentage))}%`;
+        this.progressFill.style.width = `${percentage}%`;
     }
     
     updatePlayerStatus(status) {
         this.playerStatus.textContent = status;
     }
     
-    updateFFmpegStatus(status) {
-        this.ffmpegStatus.textContent = status;
-        
-        // Добавляем индикатор статуса и кнопку повторной попытки
-        const existingRetryBtn = document.getElementById('ffmpegRetryBtn');
-        if (existingRetryBtn) {
-            existingRetryBtn.remove();
-        }
-        
-        if (status === 'Критическая ошибка' || status === 'Только нативные форматы') {
-            const retryBtn = document.createElement('button');
-            retryBtn.id = 'ffmpegRetryBtn';
-            retryBtn.className = 'btn btn-primary btn-small';
-            retryBtn.textContent = '🔄 Повторить загрузку FFmpeg';
-            retryBtn.style.marginLeft = '10px';
-            retryBtn.onclick = () => this.retryFFmpegInit();
-            
-            this.ffmpegStatus.parentNode.appendChild(retryBtn);
-        }
-    }
-    
-    async retryFFmpegInit() {
-        this.log('Повторная попытка инициализации FFmpeg...', 'info');
-        this.updateFFmpegStatus('Повторная загрузка...');
-        
-        // Сбрасываем состояние
-        this.isLoaded = false;
-        this.ffmpeg = new FFmpeg();
-        
-        // Настраиваем event listeners заново
-        this.ffmpeg.on('log', ({ message }) => {
-            this.log(`FFmpeg: ${message}`, 'info');
-        });
-        
-        this.ffmpeg.on('progress', ({ progress }) => {
-            if (progress > 0) {
-                this.updateProgress(progress * 100);
-            }
-        });
-        
-        try {
-            await this.initWithMultipleStrategies();
-        } catch (error) {
-            this.log(`Повторная инициализация не удалась: ${error}`, 'error');
-            this.updateFFmpegStatus('Критическая ошибка');
-        }
+    updateDecoderStatus(status) {
+        this.decoderStatus.textContent = status;
     }
     
     updateVideoFormat(format) {
@@ -491,8 +688,10 @@ class VideoPlayer {
     }
     
     updateCurrentSource(source) {
-        this.currentSourceEl.textContent = source.length > 50 ? 
-            source.substring(0, 47) + '...' : source;
+        const maxLength = 50;
+        const displaySource = source.length > maxLength ? 
+            source.substring(0, maxLength) + '...' : source;
+        this.currentSourceEl.textContent = displaySource;
     }
     
     log(message, level = 'info') {
@@ -500,12 +699,16 @@ class VideoPlayer {
         const logEntry = document.createElement('div');
         logEntry.className = 'log-entry';
         
-        const levelClass = `log-level-${level}`;
-        logEntry.innerHTML = `
-            <span class="log-timestamp">[${timestamp}]</span>
-            <span class="${levelClass}">[${level.toUpperCase()}]</span>
-            ${message}
-        `;
+        const timestampSpan = document.createElement('span');
+        timestampSpan.className = 'log-timestamp';
+        timestampSpan.textContent = `[${timestamp}] `;
+        
+        const messageSpan = document.createElement('span');
+        messageSpan.className = `log-level-${level}`;
+        messageSpan.textContent = message;
+        
+        logEntry.appendChild(timestampSpan);
+        logEntry.appendChild(messageSpan);
         
         this.logOutput.appendChild(logEntry);
         this.logOutput.scrollTop = this.logOutput.scrollHeight;
@@ -514,6 +717,8 @@ class VideoPlayer {
         while (this.logOutput.children.length > 100) {
             this.logOutput.removeChild(this.logOutput.firstChild);
         }
+        
+        console.log(`[${level.toUpperCase()}] ${message}`);
     }
     
     clearLogs() {
@@ -522,17 +727,31 @@ class VideoPlayer {
     }
 }
 
-// Глобальные функции для HTML
+// Создаем экземпляр плеера
 let player;
 
-// Инициализация при загрузке страницы
-window.addEventListener('DOMContentLoaded', () => {
-    player = new VideoPlayer();
+// Инициализация при загрузке DOM
+document.addEventListener('DOMContentLoaded', () => {
+    player = new H265HLSPlayer();
 });
 
-// Экспорт функций для использования в HTML
-window.playPause = () => player?.playPause();
-window.stopVideo = () => player?.stopVideo();
-window.toggleMute = () => player?.toggleMute();
-window.extractFrame = () => player?.extractFrame();
-window.clearLogs = () => player?.clearLogs(); 
+// Глобальные функции для HTML кнопок
+function playPause() {
+    if (player) player.playPause();
+}
+
+function stopVideo() {
+    if (player) player.stopVideo();
+}
+
+function toggleMute() {
+    if (player) player.toggleMute();
+}
+
+function extractFrame() {
+    if (player) player.extractFrame();
+}
+
+function clearLogs() {
+    if (player) player.clearLogs();
+} 

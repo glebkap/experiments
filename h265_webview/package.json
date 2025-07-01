@@ -1,30 +1,30 @@
 {
-    "name": "h265-ffmpeg-wasm-player",
-    "version": "1.0.0",
-    "description": "Универсальный веб-плеер на основе FFmpeg WASM для воспроизведения различных форматов видео включая H.265",
+    "name": "h265-hls-player",
+    "version": "2.0.0",
+    "description": "Веб-плеер для воспроизведения HLS плейлистов с H.265 на основе libde265 и hls.js",
     "main": "index.html",
     "scripts": {
         "start": "python3 cors_server.py --port 8080 --host 0.0.0.0",
         "serve": "serve -l 8000 --cors"
     },
     "keywords": [
-        "ffmpeg",
-        "wasm",
+        "hls",
+        "libde265",
         "h265",
         "hevc",
-        "h264",
+        "m3u8",
         "video",
         "player",
         "streaming",
         "javascript",
         "html5",
-        "cross-browser"
+        "adaptive-streaming"
     ],
-    "author": "FFmpeg WASM Player Developer",
+    "author": "H.265 HLS Player Developer",
     "license": "MIT",
     "dependencies": {
-        "@ffmpeg/ffmpeg": "^0.12.10",
-        "@ffmpeg/util": "^0.12.1"
+        "hls.js": "^1.5.0",
+        "goldvideo-player": "^1.0.2"
     },
     "devDependencies": {
         "serve": "^14.2.1"
@@ -34,10 +34,10 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/yourusername/h265-ffmpeg-wasm-player.git"
+        "url": "git+https://github.com/yourusername/h265-hls-player.git"
     },
     "bugs": {
-        "url": "https://github.com/yourusername/h265-ffmpeg-wasm-player/issues"
+        "url": "https://github.com/yourusername/h265-hls-player/issues"
     },
-    "homepage": "https://github.com/yourusername/h265-ffmpeg-wasm-player#readme"
+    "homepage": "https://github.com/yourusername/h265-hls-player#readme"
 }
