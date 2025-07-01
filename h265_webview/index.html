@@ -4,7 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>H.265 HLS Player с libde265</title>
+    <title>H.265 HLS Player с goldvideo/h265player</title>
+    <link rel="stylesheet" href="node_modules/goldvideo-player/dist/goldplay-h265.css">
     <style>
         * {
             margin: 0;
@@ -332,7 +333,7 @@
     <div class="container">
         <div class="header">
             <h1>🎬 H.265 HLS Player</h1>
-            <p>Плеер для воспроизведения HLS плейлистов с H.265 на основе libde265 и hls.js</p>
+            <p>Плеер для воспроизведения HLS плейлистов с H.265 на основе goldvideo/h265player и hls.js</p>
         </div>
 
         <div class="player-container">
@@ -374,7 +375,7 @@
                         <span id="playerStatus">Готов к загрузке</span>
                     </div>
                     <div class="status-item">
-                        <h4>libde265 декодер</h4>
+                        <h4>H.265 декодер</h4>
                         <span id="decoderStatus">Инициализация...</span>
                     </div>
                     <div class="status-item">
@@ -400,10 +401,7 @@
 
     <!-- HLS.js библиотека -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.0/dist/hls.min.js"></script>
-    <!-- libde265.js библиотека -->
-    <script src="https://cdn.jsdelivr.net/gh/strukturag/libde265.js@master/lib/libde265.js"></script>
-    <!-- goldvideo H.265 player для fallback -->
-    <link rel="stylesheet" href="node_modules/goldvideo-player/dist/goldplay-h265.css">
+    <!-- goldvideo H.265 player -->
     <script src="node_modules/goldvideo-player/dist/goldplay-h265-sdk.js"></script>
     <!-- Основной скрипт плеера -->
     <script type="module" src="script.js"></script>

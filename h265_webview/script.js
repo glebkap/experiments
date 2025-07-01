@@ -107,6 +107,18 @@ class H265HLSPlayer {
                 this.hasGoldPlayerSupport = true;
                 this.log('goldvideo H.265 player доступен как fallback', 'success');
                 
+                // Debuging: log what's available in GoldPlay
+                this.log('GoldPlay object keys: ' + Object.keys(GoldPlay).join(', '), 'info');
+                if (GoldPlay.Events) {
+                    this.log('GoldPlay.Events keys: ' + Object.keys(GoldPlay.Events).join(', '), 'info');
+                } else {
+                    this.log('GoldPlay.Events is undefined', 'warn');
+                    // Check if events are defined differently
+                    if (GoldPlay.prototype && GoldPlay.prototype.Events) {
+                        this.log('Found Events in prototype: ' + Object.keys(GoldPlay.prototype.Events).join(', '), 'info');
+                    }
+                }
+                
                 // Если нет нативной поддержки H.265, используем goldvideo как fallback
                 if (!this.hasH265Support) {
                     this.useGoldPlayer = true;
@@ -435,7 +447,7 @@ class H265HLSPlayer {
     
     async loadWithGoldPlayer(url) {
         try {
-            this.log('Загрузка с помощью goldvideo player...', 'info');
+            this.log(`Загрузка с помощью goldvideo player... ${url}`, 'info');
             
             if (!this.initGoldPlayer()) {
                 throw new Error('Не удалось инициализировать goldvideo player');
@@ -458,10 +470,11 @@ class H265HLSPlayer {
                 bufferTime: 0,
                 isShowStatistics: false
             });
-            
+            this.log('goldvideo player создан', 'success');
             // Настраиваем события goldvideo player
             this.setupGoldPlayerEvents();
-            
+            this.log('goldvideo player события настроены', 'success');
+
             this.updatePlayerStatus('Готов к воспроизведению (goldvideo)');
             this.updateVideoFormat('HLS (H.265 - goldvideo player)');
             this.log('goldvideo player загружен успешно', 'success');
@@ -478,42 +491,51 @@ class H265HLSPlayer {
     
     setupGoldPlayerEvents() {
         if (!this.goldPlayer) return;
-        
+
+        this.log('goldvideo player события настраиваются', 'info');
         // Настраиваем события goldvideo player
+        // Use string event names instead of GoldPlay.Events
+        
         // Событие готовности плеера
-        this.goldPlayer.on(GoldPlay.Events.READY, () => {
+        this.goldPlayer.on('ready', () => {
             this.log('goldvideo player готов', 'success');
             this.enableControls();
         });
+        this.log('goldvideo player событие готовности настроено', 'success');
         
         // Событие начала воспроизведения
-        this.goldPlayer.on(GoldPlay.Events.PLAY, () => {
+        this.goldPlayer.on('play', () => {
             this.isPlaying = true;
             this.updatePlayPauseBtn();
             this.log('goldvideo воспроизведение запущено', 'info');
         });
+        this.log('goldvideo player событие воспроизведения настроено', 'success');
         
         // Событие паузы
-        this.goldPlayer.on(GoldPlay.Events.PAUSE, () => {
+        this.goldPlayer.on('pause', () => {
             this.isPlaying = false;
             this.updatePlayPauseBtn();
             this.log('goldvideo пауза', 'info');
         });
+        this.log('goldvideo player событие паузы настроено', 'success');
         
         // Событие загрузки
-        this.goldPlayer.on(GoldPlay.Events.LOADSTART, () => {
+        this.goldPlayer.on('loadstart', () => {
             this.log('goldvideo начало загрузки', 'info');
         });
+        this.log('goldvideo player событие загрузки настроено', 'success');
         
         // Событие ошибки
-        this.goldPlayer.on(GoldPlay.Events.ERROR, (error) => {
+        this.goldPlayer.on('error', (error) => {
             this.log(`goldvideo player ошибка: ${error}`, 'error');
         });
+        this.log('goldvideo player событие ошибки настроено', 'success');
         
         // Событие информации о медиа
-        this.goldPlayer.on(GoldPlay.Events.MEDIAINFO, (event, data) => {
+        this.goldPlayer.on('loadedmetadata', (event, data) => {
             this.log(`goldvideo медиа информация: ${JSON.stringify(data)}`, 'info');
         });
+        this.log('goldvideo player событие информации о медиа настроено', 'success');
     }
     
     playPause() {

@@ -23,21 +23,13 @@
     "author": "H.265 HLS Player Developer",
     "license": "MIT",
     "dependencies": {
-        "hls.js": "^1.5.0",
-        "goldvideo-player": "^1.0.2"
+        "goldvideo-player": "^1.0.2",
+        "hls.js": "^1.5.0"
     },
     "devDependencies": {
         "serve": "^14.2.1"
     },
     "engines": {
         "node": ">=12.0.0"
-    },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/yourusername/h265-hls-player.git"
-    },
-    "bugs": {
-        "url": "https://github.com/yourusername/h265-hls-player/issues"
-    },
-    "homepage": "https://github.com/yourusername/h265-hls-player#readme"
+    }
 }
