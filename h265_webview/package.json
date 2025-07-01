@@ -1,0 +1,43 @@
+{
+    "name": "h265-ffmpeg-wasm-player",
+    "version": "1.0.0",
+    "description": "Универсальный веб-плеер на основе FFmpeg WASM для воспроизведения различных форматов видео включая H.265",
+    "main": "index.html",
+    "scripts": {
+        "start": "python3 cors_server.py --port 8080 --host 0.0.0.0",
+        "serve": "serve -l 8000 --cors"
+    },
+    "keywords": [
+        "ffmpeg",
+        "wasm",
+        "h265",
+        "hevc",
+        "h264",
+        "video",
+        "player",
+        "streaming",
+        "javascript",
+        "html5",
+        "cross-browser"
+    ],
+    "author": "FFmpeg WASM Player Developer",
+    "license": "MIT",
+    "dependencies": {
+        "@ffmpeg/ffmpeg": "^0.12.10",
+        "@ffmpeg/util": "^0.12.1"
+    },
+    "devDependencies": {
+        "serve": "^14.2.1"
+    },
+    "engines": {
+        "node": ">=12.0.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/yourusername/h265-ffmpeg-wasm-player.git"
+    },
+    "bugs": {
+        "url": "https://github.com/yourusername/h265-ffmpeg-wasm-player/issues"
+    },
+    "homepage": "https://github.com/yourusername/h265-ffmpeg-wasm-player#readme"
+}

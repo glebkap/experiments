@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FFmpeg WASM Video Player</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .player-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+
+        .input-section {
+            margin-bottom: 25px;
+        }
+
+        .input-section label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .url-input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .url-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .file-input-container {
+            margin-bottom: 15px;
+        }
+
+        .file-input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            background: #f8f9fa;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .file-input:hover {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .btn-secondary:hover {
+            background: #cbd5e0;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn:disabled:hover {
+            transform: none;
+            background: inherit;
+        }
+
+        .btn-small {
+            padding: 8px 12px;
+            font-size: 0.9rem;
+            border-radius: 6px;
+        }
+
+        .video-wrapper {
+            margin-bottom: 25px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        #videoPlayer {
+            width: 100%;
+            height: auto;
+            max-height: 60vh;
+            background: #000;
+        }
+
+        .canvas-wrapper {
+            margin-bottom: 25px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            display: none;
+        }
+
+        #videoCanvas {
+            width: 100%;
+            height: auto;
+            max-height: 60vh;
+            background: #000;
+        }
+
+        .progress-container {
+            margin-bottom: 20px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #667eea;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .status-section {
+            margin-bottom: 25px;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .status-item {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .status-item h4 {
+            margin-bottom: 5px;
+            color: #2d3748;
+        }
+
+        .status-item span {
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .logs-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 30px;
+        }
+
+        .logs-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .logs-header h3 {
+            color: #2d3748;
+        }
+
+        .log-output {
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            height: 300px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            scroll-behavior: smooth;
+            scrollbar-width: thin;
+            scrollbar-color: #4a5568 #2d3748;
+        }
+
+        .log-output::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .log-output::-webkit-scrollbar-track {
+            background: #2d3748;
+            border-radius: 4px;
+        }
+
+        .log-output::-webkit-scrollbar-thumb {
+            background: #4a5568;
+            border-radius: 4px;
+            border: 1px solid #2d3748;
+        }
+
+        .log-output::-webkit-scrollbar-thumb:hover {
+            background: #718096;
+        }
+
+        .log-output::-webkit-scrollbar-corner {
+            background: #2d3748;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+
+        .log-timestamp {
+            color: #a0aec0;
+        }
+
+        .log-level-info {
+            color: #4fd1c7;
+        }
+
+        .log-level-warn {
+            color: #f6e05e;
+        }
+
+        .log-level-error {
+            color: #fc8181;
+        }
+
+        .log-level-success {
+            color: #68d391;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .controls {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 FFmpeg WASM Video Player</h1>
+            <p>Универсальный плеер на основе FFmpeg WASM для воспроизведения любых форматов видео</p>
+        </div>
+
+        <div class="player-container">
+            <div class="input-section">
+                <label for="videoUrl">URL видео для загрузки:</label>
+                <input type="url" id="videoUrl" class="url-input" placeholder="https://example.com/video.mp4" value="">
+            </div>
+
+            <div class="controls">
+                <button class="btn btn-primary" onclick="playPause()" id="playPauseBtn" disabled>▶️
+                    Воспроизвести</button>
+                <button class="btn btn-secondary" onclick="stopVideo()" id="stopBtn" disabled>⏹️ Остановить</button>
+                <button class="btn btn-secondary" onclick="toggleMute()" id="muteBtn" disabled>🔇 Вкл/Выкл звук</button>
+                <button class="btn btn-secondary" onclick="extractFrame()" id="frameBtn" disabled>📸 Кадр</button>
+            </div>
+
+            <div class="progress-container" style="display: none;" id="progressContainer">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+
+            <div class="video-wrapper">
+                <video id="videoPlayer" controls preload="metadata"
+                    poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 450'%3E%3Crect width='800' height='450' fill='%23f0f0f0'/%3E%3Ctext x='400' y='225' text-anchor='middle' fill='%23999' font-size='24' font-family='Arial'%3EВидео не загружено%3C/text%3E%3C/svg%3E">
+                    Ваш браузер не поддерживает воспроизведение видео.
+                </video>
+            </div>
+
+            <div class="canvas-wrapper" id="canvasWrapper">
+                <canvas id="videoCanvas"></canvas>
+            </div>
+
+            <div class="status-section">
+                <div class="status-grid">
+                    <div class="status-item">
+                        <h4>Статус плеера</h4>
+                        <span id="playerStatus">Готов к загрузке</span>
+                    </div>
+                    <div class="status-item">
+                        <h4>FFmpeg WASM</h4>
+                        <span id="ffmpegStatus">Инициализация...</span>
+                    </div>
+                    <div class="status-item">
+                        <h4>Формат видео</h4>
+                        <span id="videoFormat">Не определен</span>
+                    </div>
+                    <div class="status-item">
+                        <h4>Текущий источник</h4>
+                        <span id="currentSource">Не выбран</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="logs-container">
+            <div class="logs-header">
+                <h3>📋 Логи системы</h3>
+                <button class="btn btn-secondary" onclick="clearLogs()">🗑️ Очистить логи</button>
+            </div>
+            <div class="log-output" id="logOutput"></div>
+        </div>
+    </div>
+
+    <!-- FFmpeg WASM -->
+    <script type="module" src="script.js"></script>
+</body>
+
+</html>
