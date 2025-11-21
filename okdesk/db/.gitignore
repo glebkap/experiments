@@ -1,0 +1,6 @@
+# dbmate generated files
+schema.sql
+migrations/schema.sql
+
+# Environment files (if they contain sensitive data)
+# .env
