@@ -20,6 +20,11 @@ class IssueRepository(ABC):
         pass
 
     @abstractmethod
+    async def find_by_external_id(self, external_id: str) -> Issue | None:
+        """Find issue by external_id only (across all sources)."""
+        pass
+
+    @abstractmethod
     async def create(self, issue: Issue) -> Issue:
         """Create a new issue."""
         pass

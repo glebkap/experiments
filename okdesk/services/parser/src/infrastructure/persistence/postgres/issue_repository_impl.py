@@ -38,6 +38,14 @@ class IssueRepositoryImpl(IssueRepository):
         model = result.scalar_one_or_none()
         return self._mapper.to_domain(model) if model else None
 
+    async def find_by_external_id(self, external_id: str) -> Issue | None:
+        """Find issue by external_id only (across all sources)."""
+        result = await self._session.execute(
+            select(IssueModel).where(IssueModel.external_id == external_id)
+        )
+        model = result.scalar_one_or_none()
+        return self._mapper.to_domain(model) if model else None
+
     async def create(self, issue: Issue) -> Issue:
         """Create a new issue."""
         model = self._mapper.to_model(issue)

@@ -22,11 +22,13 @@ class ImportOKDeskUseCase:
         import_service: ImportService,
         parser: OKDeskParser,
         analyzer_client: AnalyzerClient,
+        session=None,
     ) -> None:
         """Initialize use case with dependencies."""
         self._import_service = import_service
         self._parser = parser
         self._analyzer = analyzer_client
+        self._session = session
 
     async def execute(
         self, file_path: str | Path, source_id: UUID, filename: str | None = None
@@ -75,10 +77,14 @@ class ImportOKDeskUseCase:
             # Process file
             total_issues = 0
             new_issues = 0
+            updated_issues = 0
+            unchanged_issues = 0
             total_messages = 0
             new_messages = 0
-            skipped_issues = 0
-            skipped_messages = 0
+            updated_messages = 0
+            unchanged_messages = 0
+            skipped_issues_empty_desc = 0
+            skipped_messages_empty_content = 0
             message_ids: list[UUID] = []
             processed_lines = 0
 
@@ -92,7 +98,7 @@ class ImportOKDeskUseCase:
                 # Skip issues with empty description
                 if not issue_data["description"]:
                     logger.debug(f"Skipping issue {issue_data['external_id']} with empty description")
-                    skipped_issues += 1
+                    skipped_issues_empty_desc += 1
                     continue
 
                 issue = Issue(
@@ -108,14 +114,24 @@ class ImportOKDeskUseCase:
                     completed_at=issue_data["completed_at"],
                 )
 
-                processed_issue, is_new = await self._import_service.process_issue(issue)
+                processed_issue, status = await self._import_service.process_issue(issue)
                 total_issues += 1
-                if is_new:
+                if status == 'created':
                     new_issues += 1
+                elif status == 'updated':
+                    updated_issues += 1
+                elif status == 'unchanged':
+                    unchanged_issues += 1
 
                 # Extract and process comments
                 comments = self._parser.extract_comments(data)
                 for comment_data in comments:
+                    # Skip messages with empty content
+                    if not comment_data["content"]:
+                        logger.debug(f"Skipping message {comment_data['external_id']} with empty content")
+                        skipped_messages_empty_content += 1
+                        continue
+
                     message = Message(
                         id=uuid4(),
                         issue_id=processed_issue.id,
@@ -128,22 +144,30 @@ class ImportOKDeskUseCase:
                         published_at=comment_data["published_at"],
                     )
 
-                    processed_msg, msg_is_new = await self._import_service.process_message(
+                    processed_msg, msg_status = await self._import_service.process_message(
                         message
                     )
                     total_messages += 1
-                    if msg_is_new:
+                    if msg_status == 'created':
                         new_messages += 1
                         message_ids.append(processed_msg.id)
+                    elif msg_status == 'updated':
+                        updated_messages += 1
+                    elif msg_status == 'unchanged':
+                        unchanged_messages += 1
+
+                # Commit each record to make it visible immediately in statistics
+                if self._session:
+                    await self._session.commit()
 
                 # Log progress every 100 issues
                 if total_issues % 100 == 0:
                     progress_pct = (processed_lines / total_lines * 100) if total_lines > 0 else 0
                     logger.info(
                         f"Progress: {progress_pct:.1f}% ({processed_lines}/{total_lines}) | "
-                        f"{total_issues} issues ({new_issues} new), "
-                        f"{total_messages} messages ({new_messages} new), "
-                        f"{skipped_issues} skipped"
+                        f"Issues: {total_issues} ({new_issues} new, {updated_issues} updated, {unchanged_issues} unchanged) | "
+                        f"Messages: {total_messages} ({new_messages} new, {updated_messages} updated, {unchanged_messages} unchanged) | "
+                        f"Skipped: {skipped_issues_empty_desc} issues, {skipped_messages_empty_content} messages"
                     )
 
             # Calculate stats
@@ -154,9 +178,17 @@ class ImportOKDeskUseCase:
             # Log final summary
             logger.info("=" * 60)
             logger.info("Import completed successfully!")
-            logger.info(f"Total issues processed: {total_issues} ({new_issues} new, {total_issues - new_issues} updated)")
-            logger.info(f"Total messages processed: {total_messages} ({new_messages} new, {total_messages - new_messages} updated)")
-            logger.info(f"Skipped issues: {skipped_issues}")
+            logger.info(f"Total issues processed: {total_issues}")
+            logger.info(f"  - Created: {new_issues}")
+            logger.info(f"  - Updated: {updated_issues}")
+            logger.info(f"  - Unchanged: {unchanged_issues}")
+            logger.info(f"Total messages processed: {total_messages}")
+            logger.info(f"  - Created: {new_messages}")
+            logger.info(f"  - Updated: {updated_messages}")
+            logger.info(f"  - Unchanged: {unchanged_messages}")
+            logger.info(f"Skipped:")
+            logger.info(f"  - Issues (empty description): {skipped_issues_empty_desc}")
+            logger.info(f"  - Messages (empty content): {skipped_messages_empty_content}")
             logger.info("=" * 60)
 
             # Mark as completed

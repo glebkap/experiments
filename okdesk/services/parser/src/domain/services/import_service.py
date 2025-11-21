@@ -38,7 +38,7 @@ class ImportService:
     async def process_issue(
         self,
         issue: Issue,
-    ) -> tuple[Issue, bool]:
+    ) -> tuple[Issue, str]:
         """
         Process an issue - create or update.
 
@@ -46,33 +46,52 @@ class ImportService:
             issue: Issue to process
 
         Returns:
-            Tuple of (processed issue, is_new)
+            Tuple of (processed issue, status) where status is 'created', 'updated', or 'unchanged'
         """
-        is_duplicate = await self._dedup.is_issue_duplicate(
-            issue.external_id,
-            issue.source_id,
-        )
+        # Check if issue exists by external_id (across all sources)
+        existing = await self._issue_repo.find_by_external_id(issue.external_id)
 
-        if is_duplicate:
-            logger.debug(f"Issue {issue.external_id} already exists, updating")
-            existing = await self._issue_repo.get_by_external_id(
-                issue.external_id,
-                issue.source_id,
+        if existing:
+            # Check if this is the same issue by comparing title and description
+            is_same_issue = (
+                existing.title == issue.title
+                and existing.description == issue.description
             )
-            if existing:
-                # Update existing issue with new data
+
+            if not is_same_issue:
+                # Different issue with same external_id - this should not happen normally
+                logger.warning(
+                    f"Issue {issue.external_id} has different title/description than existing one. "
+                    f"Creating duplicate with different content."
+                )
+                created = await self._issue_repo.create(issue)
+                return created, 'created'
+
+            # Same issue - check if other fields changed
+            content_changed = (
+                existing.status != issue.status
+                or existing.priority != issue.priority
+            )
+
+            if content_changed:
+                logger.debug(f"Issue {issue.external_id} status/priority changed, updating")
                 issue.id = existing.id
+                # Keep existing source_id to avoid changing source
+                issue.source_id = existing.source_id
                 updated = await self._issue_repo.update(issue)
-                return updated, False
+                return updated, 'updated'
+            else:
+                logger.debug(f"Issue {issue.external_id} unchanged, skipping update")
+                return existing, 'unchanged'
 
         logger.debug(f"Creating new issue {issue.external_id}")
         created = await self._issue_repo.create(issue)
-        return created, True
+        return created, 'created'
 
     async def process_message(
         self,
         message: Message,
-    ) -> tuple[Message, bool]:
+    ) -> tuple[Message, str]:
         """
         Process a message - create or update.
 
@@ -80,7 +99,7 @@ class ImportService:
             message: Message to process
 
         Returns:
-            Tuple of (processed message, is_new)
+            Tuple of (processed message, status) where status is 'created', 'updated', or 'unchanged'
         """
         is_duplicate = await self._dedup.is_message_duplicate(
             message.external_id,
@@ -88,20 +107,30 @@ class ImportService:
         )
 
         if is_duplicate:
-            logger.debug(f"Message {message.external_id} already exists, updating")
             existing = await self._message_repo.get_by_external_id(
                 message.external_id,
                 message.issue_id,
             )
             if existing:
-                # Update existing message with new data
-                message.id = existing.id
-                updated = await self._message_repo.update(message)
-                return updated, False
+                # Check if content actually changed
+                content_changed = (
+                    existing.content != message.content
+                    or existing.author_name != message.author_name
+                    or existing.is_public != message.is_public
+                )
+
+                if content_changed:
+                    logger.debug(f"Message {message.external_id} content changed, updating")
+                    message.id = existing.id
+                    updated = await self._message_repo.update(message)
+                    return updated, 'updated'
+                else:
+                    logger.debug(f"Message {message.external_id} unchanged, skipping update")
+                    return existing, 'unchanged'
 
         logger.debug(f"Creating new message {message.external_id}")
         created = await self._message_repo.create(message)
-        return created, True
+        return created, 'created'
 
     def calculate_stats(
         self,

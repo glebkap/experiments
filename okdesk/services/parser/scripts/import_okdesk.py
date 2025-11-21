@@ -60,27 +60,45 @@ async def main():
             message_repo: MessageRepository = MessageRepositoryImpl(session)
             source_repo: SourceRepository = SourceRepositoryImpl(session)
 
-            # Use provided source_id or create new source
+            # Use provided source_id or find/create source by filename
             if len(sys.argv) > 2:
                 from uuid import UUID
 
                 source_id = UUID(sys.argv[2])
                 print(f"Using existing source_id: {source_id}")
             else:
-                # Create new OKDesk source
+                # Find existing source by filename or create new one
                 from src.domain.models import Source, SourceType
                 from datetime import datetime
+                from sqlalchemy import select
+                from src.infrastructure.persistence.models import SourceModel
 
-                source = Source(
-                    id=uuid4(),
-                    name=f"OKDesk Import {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                    type=SourceType.OKDESK,
-                    config=None,
-                    created_at=datetime.now(),
+                source_name = f"OKDesk: {file_path.name}"
+
+                # Try to find existing source with this name
+                result = await session.execute(
+                    select(SourceModel).where(
+                        SourceModel.name == source_name,
+                        SourceModel.type == SourceType.OKDESK
+                    )
                 )
-                created_source = await source_repo.create(source)
-                source_id = created_source.id
-                print(f"Created new source: {source.name} (ID: {source_id})")
+                existing_source_model = result.scalar_one_or_none()
+
+                if existing_source_model:
+                    source_id = existing_source_model.id
+                    print(f"Using existing source: {source_name} (ID: {source_id})")
+                else:
+                    # Create new source
+                    source = Source(
+                        id=uuid4(),
+                        name=source_name,
+                        type=SourceType.OKDESK,
+                        config=None,
+                        created_at=datetime.now(),
+                    )
+                    created_source = await source_repo.create(source)
+                    source_id = created_source.id
+                    print(f"Created new source: {source.name} (ID: {source_id})")
 
             print(f"Importing file: {file_path}")
 
@@ -94,8 +112,8 @@ async def main():
             parser = OKDeskParser()
             analyzer = AnalyzerClient("http://localhost:8002")  # Analyzer service URL
 
-            # Create use case
-            use_case = ImportOKDeskUseCase(import_service, parser, analyzer)
+            # Create use case with session for per-record commits
+            use_case = ImportOKDeskUseCase(import_service, parser, analyzer, session)
 
             # Execute import
             print("\n" + "=" * 60)
@@ -116,6 +134,7 @@ async def main():
                 for key, value in result.stats.items():
                     print(f"  {key}: {value}")
 
+            # Final commit for import job status
             await session.commit()
 
         except Exception as e:

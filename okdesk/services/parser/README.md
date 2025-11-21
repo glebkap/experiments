@@ -56,6 +56,15 @@ cd services/parser
 uv run python scripts/show_stats.py
 ```
 
+### Очистка базы данных
+
+```bash
+cd services/parser
+
+# Удалить все данные из всех таблиц (с подтверждением)
+uv run python scripts/clear_db.py
+```
+
 **Примечание:** Убедитесь, что база данных запущена:
 
 ```bash
