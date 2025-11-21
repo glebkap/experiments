@@ -58,15 +58,25 @@ class OKDeskParser:
         Returns:
             Dictionary with issue fields
         """
+        # Try to get ID from different possible locations
+        external_id = (
+            data.get("issue_id")  # Top level issue_id
+            or data.get("id")  # Direct id field
+            or (data.get("details", {}).get("id") if isinstance(data.get("details"), dict) else None)  # details.id
+        )
+
+        # Get details dict for other fields
+        details = data.get("details", {}) if isinstance(data.get("details"), dict) else {}
+
         return {
-            "external_id": str(data.get("id", "")),
-            "title": self._clean_html(data.get("title")),
-            "description": self._clean_html(data.get("description")),
-            "status": self._map_status(data.get("status")),
-            "priority": self._map_priority(data.get("priority")),
-            "created_at": self._parse_datetime(data.get("created_at")),
-            "updated_at": self._parse_datetime(data.get("updated_at")),
-            "completed_at": self._parse_datetime(data.get("completed_at")),
+            "external_id": str(external_id) if external_id else "",
+            "title": self._clean_html(details.get("title") or data.get("title")),
+            "description": self._clean_html(details.get("description") or data.get("description")),
+            "status": self._map_status(details.get("status") or data.get("status")),
+            "priority": self._map_priority(details.get("priority") or data.get("priority")),
+            "created_at": self._parse_datetime(details.get("created_at") or data.get("created_at")),
+            "updated_at": self._parse_datetime(details.get("updated_at") or data.get("updated_at")),
+            "completed_at": self._parse_datetime(details.get("completed_at") or data.get("completed_at")),
         }
 
     def extract_comments(self, data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -77,7 +87,7 @@ class OKDeskParser:
             data: Raw JSON data from JSONL line
 
         Returns:
-            List of comment dictionaries
+            List of comment dictionaries (skips messages with empty content)
         """
         comments = data.get("comments", [])
         if not isinstance(comments, list):
@@ -86,6 +96,14 @@ class OKDeskParser:
         result = []
         for comment in comments:
             if not isinstance(comment, dict):
+                continue
+
+            # Clean content
+            content = self._clean_html(comment.get("content", ""))
+
+            # Skip messages with empty content
+            if not content:
+                logger.debug(f"Skipping comment {comment.get('id')} with empty content")
                 continue
 
             # Extract author information
@@ -98,7 +116,7 @@ class OKDeskParser:
                     "author_id": str(author.get("id", "")) if author.get("id") else None,
                     "author_name": author.get("name"),
                     "author_type": author_type,
-                    "content": self._clean_html(comment.get("content", "")),
+                    "content": content,
                     "is_public": comment.get("public", True),
                     "published_at": self._parse_datetime(comment.get("published_at")),
                 }
@@ -125,10 +143,16 @@ class OKDeskParser:
 
         return clean_text if clean_text else None
 
-    def _map_status(self, status: str | None) -> str | None:
+    def _map_status(self, status: str | dict | None) -> str | None:
         """Map OKDesk status to our enum values."""
         if not status:
             return None
+
+        # Handle dict format {"code": "...", "name": "..."}
+        if isinstance(status, dict):
+            status = status.get("code")
+            if not status:
+                return None
 
         status_map = {
             "opened": "opened",
@@ -173,10 +197,21 @@ class OKDeskParser:
         """
         Parse datetime string to datetime object.
 
-        Supports various formats from OKDesk API.
+        Supports various formats from OKDesk API including timezone offsets.
+        Returns naive datetime in UTC.
         """
         if not dt_str:
             return None
+
+        # Try datetime.fromisoformat first (handles timezone offsets like +03:00)
+        try:
+            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+            # Convert to UTC and remove timezone info for PostgreSQL
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(None).replace(tzinfo=None)
+            return dt
+        except (ValueError, AttributeError):
+            pass
 
         # Try different datetime formats
         formats = [

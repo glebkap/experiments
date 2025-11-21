@@ -2,9 +2,19 @@
 """Script for importing OKDesk JSONL files."""
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from uuid import uuid4
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -41,19 +51,6 @@ async def main():
         print(f"Error: File not found: {file_path}")
         sys.exit(1)
 
-    # Use provided source_id or generate new one
-    if len(sys.argv) > 2:
-        from uuid import UUID
-
-        source_id = UUID(sys.argv[2])
-    else:
-        # Generate default source_id for OKDesk
-        source_id = uuid4()
-        print(f"Generated source_id: {source_id}")
-
-    print(f"Importing file: {file_path}")
-    print(f"Source ID: {source_id}")
-
     # Create session
     async with AsyncSessionLocal() as session:
         try:
@@ -62,6 +59,30 @@ async def main():
             issue_repo: IssueRepository = IssueRepositoryImpl(session)
             message_repo: MessageRepository = MessageRepositoryImpl(session)
             source_repo: SourceRepository = SourceRepositoryImpl(session)
+
+            # Use provided source_id or create new source
+            if len(sys.argv) > 2:
+                from uuid import UUID
+
+                source_id = UUID(sys.argv[2])
+                print(f"Using existing source_id: {source_id}")
+            else:
+                # Create new OKDesk source
+                from src.domain.models import Source, SourceType
+                from datetime import datetime
+
+                source = Source(
+                    id=uuid4(),
+                    name=f"OKDesk Import {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    type=SourceType.OKDESK,
+                    config=None,
+                    created_at=datetime.now(),
+                )
+                created_source = await source_repo.create(source)
+                source_id = created_source.id
+                print(f"Created new source: {source.name} (ID: {source_id})")
+
+            print(f"Importing file: {file_path}")
 
             # Create services
             dedup_service = DeduplicationService(issue_repo, message_repo)
@@ -90,7 +111,7 @@ async def main():
             print(f"Message: {result.message}")
             print(f"Import ID: {result.import_id}")
 
-            if result.stats:
+            if hasattr(result, "stats") and result.stats:
                 print("\nStatistics:")
                 for key, value in result.stats.items():
                     print(f"  {key}: {value}")

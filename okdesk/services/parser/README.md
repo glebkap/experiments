@@ -47,7 +47,17 @@ uv run python scripts/import_okdesk.py ../../data/okdesk/2025-11-14.jsonl
 uv run python scripts/import_okdesk.py ../../data/okdesk/2025-11-14.jsonl <source_id>
 ```
 
+### Просмотр статистики
+
+```bash
+cd services/parser
+
+# Показать статистику по базе данных
+uv run python scripts/show_stats.py
+```
+
 **Примечание:** Убедитесь, что база данных запущена:
+
 ```bash
 cd ../../db
 make run
@@ -55,7 +65,19 @@ make run
 
 ## API Endpoints
 
+### Import
+
 - `POST /api/v1/import/okdesk` - импорт файла OKDesk (JSONL)
+
+### Statistics
+
+- `GET /api/v1/stats` - общая статистика по всем сущностям
+- `GET /api/v1/stats/issues` - статистика по тикетам (по статусам, приоритетам, источникам)
+- `GET /api/v1/stats/messages` - статистика по сообщениям (по типу автора, публичность)
+- `GET /api/v1/stats/imports` - статистика по импортам (по статусам, последний импорт)
+
+### Health
+
 - `GET /health` - health check
 
 ## Конфигурация

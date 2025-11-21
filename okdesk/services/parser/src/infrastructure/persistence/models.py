@@ -19,7 +19,10 @@ class SourceModel(Base):
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    type: Mapped[SourceType] = mapped_column(SQLEnum(SourceType), nullable=False)
+    type: Mapped[SourceType] = mapped_column(
+        SQLEnum(SourceType, name="source_type", native_enum=True, values_callable=lambda x: [e.value for e in x]),
+        nullable=False
+    )
     config: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
@@ -36,7 +39,10 @@ class IssueModel(Base):
     source_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[IssueStatus | None] = mapped_column(SQLEnum(IssueStatus), nullable=True)
+    status: Mapped[IssueStatus | None] = mapped_column(
+        SQLEnum(IssueStatus, name="issue_status", native_enum=True, values_callable=lambda x: [e.value for e in x]),
+        nullable=True
+    )
     priority: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -53,7 +59,10 @@ class MessageModel(Base):
     external_id: Mapped[str] = mapped_column(String(255), nullable=False)
     author_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     author_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    author_type: Mapped[AuthorType | None] = mapped_column(SQLEnum(AuthorType), nullable=True)
+    author_type: Mapped[AuthorType | None] = mapped_column(
+        SQLEnum(AuthorType, name="author_type", native_enum=True, values_callable=lambda x: [e.value for e in x]),
+        nullable=True
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -72,6 +81,9 @@ class ImportModel(Base):
         DateTime, nullable=False, default=datetime.utcnow
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    status: Mapped[ImportStatus] = mapped_column(SQLEnum(ImportStatus), nullable=False)
+    status: Mapped[ImportStatus] = mapped_column(
+        SQLEnum(ImportStatus, name="import_status", native_enum=True, values_callable=lambda x: [e.value for e in x]),
+        nullable=False
+    )
     stats: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

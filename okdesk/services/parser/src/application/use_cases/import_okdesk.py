@@ -63,16 +63,38 @@ class ImportOKDeskUseCase:
         logger.info(f"Created import job {import_job.id}")
 
         try:
+            # Count total lines in file for progress percentage
+            logger.info("Counting total records in file...")
+            total_lines = 0
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip():
+                        total_lines += 1
+            logger.info(f"Total records to process: {total_lines}")
+
             # Process file
             total_issues = 0
             new_issues = 0
             total_messages = 0
             new_messages = 0
+            skipped_issues = 0
+            skipped_messages = 0
             message_ids: list[UUID] = []
+            processed_lines = 0
+
+            logger.info("Starting import processing...")
 
             for data in self._parser.parse_file(file_path):
+                processed_lines += 1
                 # Extract and process issue
                 issue_data = self._parser.extract_issue(data)
+
+                # Skip issues with empty description
+                if not issue_data["description"]:
+                    logger.debug(f"Skipping issue {issue_data['external_id']} with empty description")
+                    skipped_issues += 1
+                    continue
+
                 issue = Issue(
                     id=uuid4(),
                     external_id=issue_data["external_id"],
@@ -114,10 +136,28 @@ class ImportOKDeskUseCase:
                         new_messages += 1
                         message_ids.append(processed_msg.id)
 
+                # Log progress every 100 issues
+                if total_issues % 100 == 0:
+                    progress_pct = (processed_lines / total_lines * 100) if total_lines > 0 else 0
+                    logger.info(
+                        f"Progress: {progress_pct:.1f}% ({processed_lines}/{total_lines}) | "
+                        f"{total_issues} issues ({new_issues} new), "
+                        f"{total_messages} messages ({new_messages} new), "
+                        f"{skipped_issues} skipped"
+                    )
+
             # Calculate stats
             stats = self._import_service.calculate_stats(
                 total_issues, new_issues, total_messages, new_messages
             )
+
+            # Log final summary
+            logger.info("=" * 60)
+            logger.info("Import completed successfully!")
+            logger.info(f"Total issues processed: {total_issues} ({new_issues} new, {total_issues - new_issues} updated)")
+            logger.info(f"Total messages processed: {total_messages} ({new_messages} new, {total_messages - new_messages} updated)")
+            logger.info(f"Skipped issues: {skipped_issues}")
+            logger.info("=" * 60)
 
             # Mark as completed
             import_job.mark_completed(stats)

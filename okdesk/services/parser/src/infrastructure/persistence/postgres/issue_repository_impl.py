@@ -55,7 +55,7 @@ class IssueRepositoryImpl(IssueRepository):
         if not model:
             raise ValueError(f"Issue with id {issue.id} not found")
 
-        # Update fields
+        # Update all fields
         model.external_id = issue.external_id
         model.source_id = issue.source_id
         model.title = issue.title
