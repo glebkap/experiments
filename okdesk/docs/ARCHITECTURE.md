@@ -13,11 +13,12 @@
 ### 1.1 Принципы архитектуры
 - **Микросервисная архитектура** - независимые сервисы в отдельных контейнерах
 - **Изоляция** - каждый сервис работает в собственном Docker-контейнере
-- **Единое хранилище** - централизованная БД PostgreSQL для всех данных
+- **Гибридное хранилище** - PostgreSQL для структурированных данных + ChromaDB для векторов
 - **Локальное развертывание** - система работает на одной машине
-- **Пакетная обработка** - анализ сообщений пачками для эффективности
-- **AI-первый подход** - использование LLM агентов (pydantic_ai) для анализа
-- **Динамическое определение намерений** - намерения извлекаются из анализа, а не предопределены
+- **Pipeline обработка** - многоэтапная обработка issues (preprocessing → embeddings → vector DB)
+- **Issue-centric approach** - обработка целых issues (title + description), не отдельных messages
+- **Отложенная кластеризация** - кластеризация выполняется отдельно после обработки
+- **Семантический поиск** - использование векторных представлений для поиска похожих issues
 
 ---
 
@@ -49,13 +50,15 @@
     │  Parser    │ │ Analyzer │ │  Query Service  │
     │  Service   │ │ Service  │ │  (Поиск/Отчеты) │
     └─────┬──────┘ └────┬─────┘ └────────┬────────┘
-          │             │                  │
-          └─────────────┴──────────────────┘
-                        │
-                        ▼
-             ┌──────────────────────┐
-             │   PostgreSQL DB      │
-             └──────────────────────┘
+          │             │ │                │
+          │             │ └────────┐       │
+          └─────────────┴──────────┼───────┘
+                        │          │
+                        ▼          ▼
+             ┌──────────────────────┐  ┌─────────────┐
+             │   PostgreSQL DB      │  │  ChromaDB   │
+             │ (Структурные данные) │  │ (Векторы)   │
+             └──────────────────────┘  └─────────────┘
 ```
 
 ---
@@ -160,22 +163,32 @@ CREATE TABLE message_tags (
   UNIQUE(message_analysis_id, tag_id)
 );
 
--- Кластеры намерений
-CREATE TABLE intent_clusters (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL,
-  description TEXT,
-  pattern TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+-- Предобработанные issues (результат Stage 1)
+CREATE TABLE preprocessed_issues (
+  id UUID PRIMARY KEY REFERENCES issues(id),
+  content TEXT NOT NULL,  -- preprocessed title + description
+  processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Связь сообщений с кластерами
-CREATE TABLE message_clusters (
+-- Кластеры issues (результат кластеризации)
+CREATE TABLE clusters (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cluster_label INT NOT NULL UNIQUE,  -- метка из алгоритма
+  name TEXT,  -- название (опционально через LLM)
+  description TEXT,  -- описание (опционально через LLM)
+  centroid_embedding vector(1024),  -- центроид кластера
+  size INT DEFAULT 0,  -- количество issues
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Связь issues с кластерами
+CREATE TABLE message_clusters (
   message_id UUID REFERENCES messages(id),
-  cluster_id UUID REFERENCES intent_clusters(id),
-  similarity_score FLOAT CHECK (similarity_score >= 0 AND similarity_score <= 1),
-  UNIQUE(message_id, cluster_id)
+  cluster_id UUID REFERENCES clusters(id),
+  distance_to_centroid FLOAT,  -- расстояние до центроида (0-1)
+  assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (message_id, cluster_id)
 );
 
 -- История импортов
@@ -197,6 +210,11 @@ CREATE INDEX idx_messages_published_at ON messages(published_at);
 CREATE INDEX idx_message_analysis_message_id ON message_analysis(message_id);
 CREATE INDEX idx_issues_external_id ON issues(external_id);
 CREATE INDEX idx_issues_created_at ON issues(created_at);
+CREATE INDEX idx_preprocessed_issues_processed ON preprocessed_issues(processed_at);
+CREATE INDEX idx_preprocessed_issues_text ON preprocessed_issues USING gin(to_tsvector('russian', content));
+CREATE INDEX idx_clusters_size ON clusters(size DESC);
+CREATE INDEX idx_message_clusters_cluster_id ON message_clusters(cluster_id);
+CREATE INDEX idx_message_clusters_distance ON message_clusters(distance_to_centroid);
 CREATE INDEX idx_message_intents_intent_id ON message_intents(intent_id);
 CREATE INDEX idx_message_tags_tag_id ON message_tags(tag_id);
 CREATE INDEX idx_intents_code ON intents(code);
@@ -240,73 +258,84 @@ CREATE INDEX idx_intents_code ON intents(code);
 7. Возврат статистики
 
 ### 3.3 Analyzer Service
-**Назначение:** Пакетный анализ сообщений с помощью LLM агентов
+**Назначение:** Pipeline-обработка issues с генерацией эмбеддингов и кластеризацией
 
 **Технологии:**
 - Python 3.12
 - FastAPI для API
-- **pydantic_ai** - для LLM агентов
-- scikit-learn для кластеризации
+- **SentenceTransformers** - для генерации эмбеддингов (multilingual-e5-large)
+- **ChromaDB** - векторное хранилище для семантического поиска
+- **HDBSCAN / K-means** - алгоритмы кластеризации
 - BeautifulSoup4 для очистки HTML
+- pymorphy2 для лемматизации
 - psycopg2 для работы с PostgreSQL
 
-**Функции:**
-- Пакетная обработка сообщений (batch processing)
-- Очистка текста от HTML
-- Определение намерений через LLM агента (pydantic_ai)
-- Автоматическое тегирование
-- Динамическое создание новых намерений
-- Поддержка множественных намерений и тегов
-- Кластеризация
+**Архитектура:** DDD (Domain-Driven Design) + Pipeline Processing
+
+**Pipeline обработки (4 этапа):**
+
+**Stage 0: Data Fetching**
+- Получение N необработанных issues из БД
+- SQL: `SELECT * FROM issues WHERE id NOT IN (SELECT id FROM preprocessed_issues)`
+- Загрузка связанных messages (для будущего расширения)
+
+**Stage 1: Preprocessing**
+- Извлечение issue.title и issue.description
+- Очистка HTML/XML тегов (BeautifulSoup)
+- Нормализация текста (lower, spaces, punctuation)
+- Удаление стоп-слов и шаблонных фраз
+- Лемматизация (pymorphy2)
+- Токенизация спец. паттернов ([URL], [EMAIL], [PHONE])
+- Объединение: `"{title_processed}\n\n{description_processed}"`
+- Сохранение в `preprocessed_issues` (id, content, processed_at)
+
+**Stage 2: Embedding Generation**
+- Генерация векторных представлений через SentenceTransformer
+- Batch обработка (32 issue за раз)
+- L2 нормализация векторов
+- Embeddings передаются в Stage 3 (не сохраняются в PostgreSQL)
+
+**Stage 3: Vector DB Storage**
+- Сохранение embeddings в ChromaDB
+- Идентификатор: issue.id (UUID)
+- Document: preprocessed content
+- Метрика: cosine similarity
+- Связь с PostgreSQL только через issue.id
+
+**Stage 4: Completion**
+- Логирование успешной обработки
+- Обновление статистики
+
+**Кластеризация (отдельная команда):**
+- Выполняется после обработки всех/большинства issues
+- Загрузка всех embeddings из ChromaDB
+- Применение HDBSCAN (автоопределение кластеров) или K-means
+- Вычисление центроидов и расстояний
+- Сохранение в таблицы: `clusters`, `message_clusters`
+- Опционально: генерация названий через LLM
 
 **API endpoints:**
-- `POST /api/v1/analyze/batch` - пакетный анализ (основной метод)
-  - Body: `{message_ids: [uuid1, uuid2, ...], batch_size: 10}`
-  - Response: `{total, processed, failed, results: [...]}`
-- `POST /api/v1/analyze/all` - анализ всех необработанных
-- `POST /api/v1/analyze/message/{id}` - анализ одного сообщения
-- `POST /api/v1/reanalyze/{id}` - повторный анализ
+- `POST /api/v1/analyzer/process` - запуск pipeline обработки
+  - Body: `{batch_size: 100}`
+  - Response: `{processed_count, duration, stats}`
+- `POST /api/v1/analyzer/resume` - возобновление после сбоя
+- `POST /api/v1/analyzer/reprocess/{issue_id}` - переобработка issue
+- `POST /api/v1/analyzer/cluster` - запуск кластеризации
+  - Body: `{method: "hdbscan|kmeans", use_llm: false}`
+- `POST /api/v1/analyzer/search/similar` - семантический поиск
+  - Body: `{issue_id: "uuid", top_k: 10}`
+- `GET /api/v1/analyzer/stats` - статистика обработки
 
-**Пакетная обработка:**
+**Производительность:**
+- Preprocessing: ~100-200 issues/sec
+- Embeddings: ~50-100 issues/sec (bottleneck, зависит от GPU)
+- Vector DB: ~500-1000 issues/sec
+- **Итого: 10000 issues за ~3-6 минут**
 
-Анализатор работает в режиме batch - обрабатывает несколько сообщений (10-50) за один вызов LLM. Это позволяет:
-- Снизить количество вызовов к LLM
-- Использовать контекст между сообщениями
-- Эффективнее определять повторяющиеся намерения
-- Снизить стоимость обработки
-
-**Pydantic_AI модели:**
-
-- `IntentResult` - результат определения одного намерения (code, name, description, confidence)
-- `MessageAnalysisResult` - результат анализа одного сообщения (message_id, intents, tags, reasoning)
-- `BatchAnalysisResult` - результат пакетного анализа (messages, common_intents)
-
-**Рабочий процесс:**
-1. Получение списка message_ids
-2. Разбивка на батчи (по 10-50 сообщений)
-3. Для каждого батча:
-   - Загрузка сообщений из БД
-   - Очистка HTML через BeautifulSoup
-   - Вызов pydantic_ai агента с пачкой сообщений
-   - Агент возвращает BatchAnalysisResult с намерениями для каждого сообщения
-4. Сохранение результатов:
-   - INSERT в `message_analysis`
-   - Для каждого намерения:
-     - Получить или создать в `intents` по code
-     - INSERT в `message_intents`
-   - Для каждого тега:
-     - Получить или создать в `tags`
-     - INSERT в `message_tags`
-5. Возврат результатов
-
-**Промпт для LLM агента:**
-
-Агенту передается системный промпт с инструкциями:
-- Анализировать пачку сообщений
-- Использовать консистентные коды намерений для схожих запросов
-- Для каждого намерения создавать: code (snake_case), name, description, confidence
-- Намерения могут быть любыми (например: "запрос_информации", "нужен_единорог")
-- Возвращать результат в структурированном виде через Pydantic модели
+**Новые таблицы БД:**
+- `preprocessed_issues` - предобработанный текст issues
+- `clusters` - кластеры схожих issues
+- `message_clusters` - связь issues с кластерами
 
 ### 3.4 Query Service
 **Назначение:** Поиск, фильтрация и генерация отчетов
@@ -315,23 +344,29 @@ CREATE INDEX idx_intents_code ON intents(code);
 - Python 3.12
 - FastAPI для API
 - SQLAlchemy 2.0 для ORM
+- ChromaDB client для семантического поиска
 - psycopg2
 
 **Функции:**
-- Полнотекстовый поиск по сообщениям
-- Фильтрация по намерениям, тегам, датам
+- **Семантический поиск** - поиск похожих issues через векторные представления
+- Полнотекстовый поиск по сообщениям (PostgreSQL full-text)
+- Фильтрация по кластерам, тегам, датам, источникам
+- Просмотр кластеров и их содержимого
 - Агрегация статистики
 - Генерация отчетов (JSON, CSV)
 
 **API endpoints:**
+- `POST /api/v1/search/semantic` - семантический поиск похожих issues
+  - Body: `{query: "текст" | issue_id: "uuid", top_k: 10}`
 - `GET /api/v1/search` - полнотекстовый поиск
 - `GET /api/v1/issues` - список обращений с фильтрами
 - `GET /api/v1/issues/{id}` - детали обращения
-- `GET /api/v1/stats/intents` - статистика по намерениям
-- `GET /api/v1/stats/tags` - статистика по тегам
+- `GET /api/v1/clusters` - список кластеров
+- `GET /api/v1/clusters/{id}` - детали кластера с issues
+- `GET /api/v1/stats/processing` - статистика обработки
+- `GET /api/v1/stats/clusters` - статистика по кластерам
 - `GET /api/v1/stats/sources` - статистика по источникам
 - `GET /api/v1/stats/timeline` - временная статистика
-- `GET /api/v1/clusters` - список кластеров
 - `POST /api/v1/export` - экспорт данных
 
 ### 3.5 API Gateway Service
