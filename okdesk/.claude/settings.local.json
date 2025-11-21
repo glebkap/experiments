@@ -4,7 +4,11 @@
       "Bash(mkdir:*)",
       "Bash(make:*)",
       "Bash(touch:*)",
-      "Bash(docker exec:*)"
+      "Bash(docker exec:*)",
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(uv init:*)",
+      "Bash(uv add:*)"
     ],
     "deny": [],
     "ask": []
