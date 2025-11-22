@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: support-chromadb
+    env_file:
+      - .env
+    volumes:
+      - chromadb_data:/chroma/chroma
+    ports:
+      - "8100:8000"
+    networks:
+      - support-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  chromadb_data:
+    name: support-chromadb-data
+
+networks:
+  support-network:
+    name: support-network
+    external: true

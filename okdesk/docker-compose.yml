@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    build: ./db
+    container_name: support-db
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./data:/opt/support/data:ro
+    ports:
+      - "15432:5432"
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    networks:
+      - support-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ChromaDB Vector Database
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: support-chromadb
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+      - ALLOW_RESET=TRUE
+    volumes:
+      - chromadb_data:/chroma/chroma
+    ports:
+      - "8100:8000"
+    networks:
+      - support-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Parser Service
+  parser:
+    build: ./services/parser
+    container_name: support-parser
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data:ro
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: support
+      DB_PASSWORD: support
+      DB_NAME: support
+    ports:
+      - "8001:8001"
+    networks:
+      - support-network
+    restart: unless-stopped
+
+  # Analyzer Service (TODO: будет создан)
+  # analyzer:
+  #   build: ./services/analyzer
+  #   container_name: support-analyzer
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #     chromadb:
+  #       condition: service_healthy
+  #   environment:
+  #     DATABASE_URL: postgresql+asyncpg://support:support@db:5432/support
+  #     CHROMADB_HOST: chromadb
+  #     CHROMADB_PORT: 8000
+  #     EMBEDDING_MODEL: intfloat/multilingual-e5-large
+  #     DEVICE: cpu
+  #     BATCH_SIZE: 100
+  #   ports:
+  #     - "8002:8002"
+  #   networks:
+  #     - support-network
+  #   restart: unless-stopped
+
+volumes:
+  pg_data:
+    name: support-db-pg-data
+  chromadb_data:
+    name: support-chromadb-data
+
+networks:
+  support-network:
+    driver: bridge
