@@ -26,7 +26,7 @@ class IssueRepositoryImpl(IssueRepository):
         """
         self.session = session
 
-    async def get_unprocessed(self, limit: int = 100) -> List[Issue]:
+    async def get_unprocessed_issues(self, limit: int) -> List[Issue]:
         """
         Get unprocessed issues (not in preprocessed_issues table).
 
@@ -75,6 +75,27 @@ class IssueRepositoryImpl(IssueRepository):
             return None
 
         return self._to_domain(model)
+
+    async def get_by_ids(self, issue_ids: List[UUID]) -> List[Issue]:
+        """
+        Get issues by IDs.
+
+        Args:
+            issue_ids: List of issue UUIDs
+
+        Returns:
+            List of Issue domain objects
+        """
+        if not issue_ids:
+            return []
+
+        query = select(IssueModel).where(IssueModel.id.in_(issue_ids))
+        result = await self.session.execute(query)
+        models = result.scalars().all()
+
+        logger.debug(f"Found {len(models)} issues out of {len(issue_ids)} requested")
+
+        return [self._to_domain(model) for model in models]
 
     async def count_unprocessed(self) -> int:
         """

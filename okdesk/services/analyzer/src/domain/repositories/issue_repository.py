@@ -11,17 +11,19 @@ class IssueRepository(ABC):
     """Abstract repository for Issue operations."""
 
     @abstractmethod
-    async def get_unprocessed_issues(self, limit: int) -> List[Issue]:
+    async def get_unprocessed_issues(self, limit: int, reprocess_all: bool = False) -> List[Issue]:
         """
         Get issues that have not been preprocessed yet.
 
         Issues are considered unprocessed if they don't exist in preprocessed_issues table.
+        If reprocess_all is True, returns all issues regardless of processing status.
 
         Args:
             limit: Maximum number of issues to return
+            reprocess_all: If True, ignore preprocessing status and return all issues
 
         Returns:
-            List of unprocessed issues
+            List of unprocessed (or all) issues
         """
         pass
 

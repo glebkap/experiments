@@ -1,15 +1,16 @@
 """API interface layer."""
 
-from .routes import router
+from .routes_new import router
 from .schemas import (
     ClusterInfoResponse,
     ClusteringRequest,
     ClusteringResponse,
     PipelineRequest,
     PipelineResponse,
+    ProcessingStatusResponse,
+    ReprocessRequest,
     SearchRequest,
     SearchResponse,
-    SearchResult,
     ServiceStatusResponse,
 )
 
@@ -21,7 +22,8 @@ __all__ = [
     "ClusterInfoResponse",
     "ClusteringRequest",
     "ClusteringResponse",
+    "ProcessingStatusResponse",
+    "ReprocessRequest",
     "SearchRequest",
     "SearchResponse",
-    "SearchResult",
 ]

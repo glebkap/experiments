@@ -6,7 +6,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ...application.processing_manager import ProcessingManager
+from ...application.processing_manager import (
+    ProcessingManager,
+    get_processing_manager as get_global_processing_manager,
+)
 from ...application.use_cases.cluster_all_issues import ClusterAllIssuesUseCase
 from ...application.use_cases.reprocess_issue import ReprocessIssueUseCase
 from ...application.use_cases.search_similar_issues import SearchSimilarIssuesUseCase
@@ -43,9 +46,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Global processing manager instance (singleton)
-_processing_manager: Optional[ProcessingManager] = None
-
 
 def get_processing_manager() -> ProcessingManager:
     """
@@ -54,23 +54,12 @@ def get_processing_manager() -> ProcessingManager:
     Returns:
         ProcessingManager singleton
     """
-    global _processing_manager
-    if _processing_manager is None:
+    manager = get_global_processing_manager()
+    if manager is None:
         raise HTTPException(
             status_code=500, detail="Processing manager not initialized"
         )
-    return _processing_manager
-
-
-def set_processing_manager(manager: ProcessingManager):
-    """
-    Set global processing manager instance.
-
-    Args:
-        manager: ProcessingManager instance
-    """
-    global _processing_manager
-    _processing_manager = manager
+    return manager
 
 
 # ==================== Processing Control Endpoints ====================

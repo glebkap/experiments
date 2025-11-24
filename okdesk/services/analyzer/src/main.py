@@ -47,6 +47,8 @@ async def startup():
     from .application.processing_manager import set_processing_manager, ProcessingManager
     from .infrastructure.dependencies import (
         get_process_batch_use_case,
+        get_preprocessed_issue_repository,
+        get_vector_db_service,
         get_database_session,
     )
 
@@ -54,17 +56,38 @@ async def startup():
     async for session in get_database_session():
         process_batch_use_case = get_process_batch_use_case(session)
 
+        # Handle reprocess_all flag - clear all preprocessed issues and ChromaDB
+        if settings.reprocess_all:
+            logger.warning("=" * 70)
+            logger.warning("⚠️  REPROCESS_ALL flag is enabled!")
+            logger.warning("⚠️  This will clear all preprocessed issues AND ChromaDB embeddings!")
+            logger.warning("⚠️  Force reprocessing with current embedding model settings!")
+            logger.warning("=" * 70)
+
+            # Clear preprocessed_issues table
+            preprocessed_repo = get_preprocessed_issue_repository(session)
+            deleted_issues = await preprocessed_repo.clear_all()
+            logger.warning(f"✅ Cleared {deleted_issues} preprocessed issues from PostgreSQL")
+
+            # Clear ChromaDB collection
+            vectordb = get_vector_db_service()
+            deleted_embeddings = vectordb.clear_all()
+            logger.warning(f"✅ Cleared {deleted_embeddings} embeddings from ChromaDB")
+
+            logger.warning("=" * 70)
+
         # Create and register ProcessingManager
         manager = ProcessingManager(
             process_batch_use_case=process_batch_use_case,
             batch_size=settings.batch_size,
             poll_interval_seconds=settings.poll_interval_seconds,
+            device=settings.device,
         )
         set_processing_manager(manager)
 
         logger.info(
             f"ProcessingManager initialized (batch_size={settings.batch_size}, "
-            f"poll_interval={settings.poll_interval_seconds}s)"
+            f"poll_interval={settings.poll_interval_seconds}s, device={settings.device})"
         )
 
         # Auto-start if configured

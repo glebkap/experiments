@@ -77,3 +77,15 @@ class PreprocessedIssueRepository(ABC):
             Number of preprocessed issues
         """
         pass
+
+    @abstractmethod
+    async def clear_all(self) -> int:
+        """
+        Delete all preprocessed issues (for full reprocessing).
+
+        WARNING: This will mark all issues as unprocessed!
+
+        Returns:
+            Number of deleted records
+        """
+        pass

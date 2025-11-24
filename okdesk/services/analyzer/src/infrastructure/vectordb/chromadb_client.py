@@ -59,7 +59,7 @@ class ChromaDBClient(VectorDBService):
         self,
         issue_ids: List[UUID],
         embeddings: np.ndarray,
-        texts: List[str],
+        documents: List[str],
     ) -> None:
         """
         Save embeddings to ChromaDB.
@@ -67,11 +67,11 @@ class ChromaDBClient(VectorDBService):
         Args:
             issue_ids: List of issue UUIDs
             embeddings: numpy array of shape (n_samples, embedding_dim)
-            texts: List of preprocessed text content
+            documents: List of preprocessed text content
         """
-        if len(issue_ids) != len(embeddings) or len(issue_ids) != len(texts):
+        if len(issue_ids) != len(embeddings) or len(issue_ids) != len(documents):
             raise ValueError(
-                f"Mismatched lengths: {len(issue_ids)} IDs, {len(embeddings)} embeddings, {len(texts)} texts"
+                f"Mismatched lengths: {len(issue_ids)} IDs, {len(embeddings)} embeddings, {len(documents)} documents"
             )
 
         if len(issue_ids) == 0:
@@ -88,14 +88,14 @@ class ChromaDBClient(VectorDBService):
             embeddings_list = embeddings.tolist()
 
             # Create metadata for each embedding
-            metadatas = [{"text": text} for text in texts]
+            metadatas = [{"text": text} for text in documents]
 
             # Add to collection (upsert will update existing entries)
             self.collection.upsert(
                 ids=ids,
                 embeddings=embeddings_list,
                 metadatas=metadatas,
-                documents=texts,  # Store full text for retrieval
+                documents=documents,  # Store full text for retrieval
             )
 
             logger.info(
@@ -189,7 +189,7 @@ class ChromaDBClient(VectorDBService):
             logger.error(f"Failed to retrieve embeddings from ChromaDB: {e}")
             raise
 
-    async def delete_by_issue_id(self, issue_id: UUID) -> None:
+    async def delete_embedding(self, issue_id: UUID) -> None:
         """
         Delete embedding by issue ID.
 
@@ -206,27 +206,105 @@ class ChromaDBClient(VectorDBService):
             logger.error(f"Failed to delete embedding: {e}")
             raise
 
-    async def clear_all(self) -> None:
+    async def search_similar_by_id(
+        self, issue_id: UUID, top_k: int = 10, min_similarity: float = 0.7
+    ) -> List:
+        """
+        Find similar issues by embedding ID.
+
+        Args:
+            issue_id: Reference issue ID
+            top_k: Number of similar issues to return
+            min_similarity: Minimum similarity threshold (0-1)
+
+        Returns:
+            List of similar issue DTOs
+        """
+        logger.debug(f"Searching similar issues by ID: {issue_id}")
+
+        try:
+            # Get the embedding for the reference issue
+            result = self.collection.get(
+                ids=[str(issue_id)],
+                include=["embeddings"]
+            )
+
+            if not result["ids"] or not result["embeddings"]:
+                raise ValueError(f"No embedding found for issue {issue_id}")
+
+            query_embedding = result["embeddings"][0]
+
+            # Search using the embedding
+            return await self.search_similar(
+                query_embedding=query_embedding,
+                top_k=top_k,
+                min_similarity=min_similarity
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to search similar by ID: {e}")
+            raise
+
+    def count_total(self) -> int:
+        """
+        Count total number of embeddings.
+
+        Returns:
+            Total count
+        """
+        try:
+            count = self.collection.count()
+            logger.debug(f"Total embeddings in ChromaDB: {count}")
+            return count
+        except Exception as e:
+            logger.error(f"Failed to count embeddings in ChromaDB: {e}", exc_info=True)
+            return 0
+
+    def exists(self, issue_id: UUID) -> bool:
+        """
+        Check if embedding exists for issue.
+
+        Args:
+            issue_id: Issue UUID
+
+        Returns:
+            True if embedding exists
+        """
+        result = self.collection.get(ids=[str(issue_id)])
+        return len(result["ids"]) > 0
+
+    def clear_all(self) -> int:
         """
         Delete all embeddings from the collection.
 
-        WARNING: This will delete all data!
+        WARNING: This will delete the entire collection and recreate it!
+        Used when changing embedding model or dimension.
+
+        Returns:
+            Number of deleted embeddings
         """
-        logger.warning(f"Clearing all embeddings from collection '{self.collection_name}'")
+        logger.warning("⚠️  Clearing ALL embeddings from ChromaDB collection!")
+        logger.warning(f"⚠️  Collection: '{self.collection_name}'")
 
         try:
+            # Get count before deletion
+            count = self.collection.count()
+            logger.warning(f"⚠️  Deleting {count} embeddings...")
+
             # Delete the collection and recreate it
             self.client.delete_collection(name=self.collection_name)
 
+            # Recreate collection with same metadata
             self.collection = self.client.get_or_create_collection(
                 name=self.collection_name,
                 metadata={"hnsw:space": "cosine"},
             )
 
-            logger.info("Successfully cleared all embeddings")
+            logger.warning(f"✅ Cleared {count} embeddings from ChromaDB")
+            return count
 
         except Exception as e:
-            logger.error(f"Failed to clear embeddings: {e}")
+            logger.error(f"Failed to clear embeddings from ChromaDB: {e}", exc_info=True)
             raise
 
     def get_collection_info(self) -> dict:
@@ -236,8 +314,19 @@ class ChromaDBClient(VectorDBService):
         Returns:
             Dictionary with collection metadata
         """
-        return {
-            "name": self.collection_name,
-            "count": self.collection.count(),
-            "metadata": self.collection.metadata,
-        }
+        try:
+            count = self.collection.count()
+            logger.debug(f"ChromaDB collection '{self.collection_name}' has {count} items")
+
+            return {
+                "name": self.collection_name,
+                "count": count,
+                "metadata": self.collection.metadata,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get collection info: {e}", exc_info=True)
+            return {
+                "name": self.collection_name,
+                "count": 0,
+                "metadata": {},
+            }

@@ -37,23 +37,48 @@ class Stage3VectorDBStorage(BaseStage):
             Context with updated statistics
         """
         if context.embeddings is None or not context.preprocessed_issues:
-            logger.warning("No embeddings to store")
+            logger.warning("[Stage 3] No embeddings to store")
             return context
 
         # Extract data for storage
         issue_ids = [pi.id for pi in context.preprocessed_issues]
         documents = [pi.content for pi in context.preprocessed_issues]
 
-        logger.info(f"Storing {len(issue_ids)} embeddings in ChromaDB...")
+        logger.info(f"[Stage 3] Storing {len(issue_ids)} embeddings in ChromaDB...")
 
-        # Save to ChromaDB (synchronous operation)
-        self.vectordb.save_embeddings(
-            issue_ids=issue_ids, embeddings=context.embeddings, documents=documents
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"[Stage 3] First 3 issue IDs: {[str(id) for id in issue_ids[:3]]}")
+            logger.debug(
+                f"[Stage 3] Embedding shape: {context.embeddings.shape}, "
+                f"dtype: {context.embeddings.dtype}"
+            )
 
-        # Update statistics
-        context.add_stat("embeddings_stored", len(issue_ids))
+        # Save to ChromaDB (asynchronous operation)
+        import time
+        start_time = time.time()
 
-        logger.info(f"Stored {len(issue_ids)} embeddings successfully")
+        try:
+            await self.vectordb.save_embeddings(
+                issue_ids=issue_ids, embeddings=context.embeddings, documents=documents
+            )
+            elapsed = time.time() - start_time
+
+            # Update statistics
+            context.add_stat("embeddings_stored", len(issue_ids))
+            context.add_stat("vectordb_time_seconds", round(elapsed, 2))
+
+            logger.info(
+                f"[Stage 3] Stored {len(issue_ids)} embeddings successfully "
+                f"(time={elapsed:.2f}s, rate={len(issue_ids)/elapsed:.1f} issues/sec)"
+            )
+
+            if logger.isEnabledFor(logging.DEBUG):
+                # Verify storage by checking collection count
+                total_count = self.vectordb.count_total()
+                logger.debug(f"[Stage 3] Total embeddings in ChromaDB: {total_count}")
+
+        except Exception as e:
+            logger.error(f"[Stage 3] Failed to store embeddings: {e}", exc_info=True)
+            raise
 
         return context

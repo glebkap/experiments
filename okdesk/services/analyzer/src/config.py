@@ -1,5 +1,8 @@
 """Application configuration using pydantic-settings."""
 
+from typing import Literal
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,9 +23,28 @@ class Settings(BaseSettings):
 
     # ML Models
     embedding_model: str = "intfloat/multilingual-e5-large"
-    embedding_dim: int = 1024
     max_seq_length: int = 512
-    device: str = "cpu"  # cpu or cuda
+    device: Literal["cpu", "cuda", "mps", "auto"] = "cpu"  # cpu, cuda (NVIDIA GPU), mps (Apple Silicon), auto
+
+    @field_validator("device")
+    @classmethod
+    def validate_device(cls, v: str) -> str:
+        """
+        Validate device setting.
+
+        Args:
+            v: Device value
+
+        Returns:
+            Validated device string
+
+        Raises:
+            ValueError: If device is not supported
+        """
+        allowed = ["cpu", "cuda", "mps", "auto"]
+        if v not in allowed:
+            raise ValueError(f"device must be one of {allowed}, got '{v}'")
+        return v
 
     # Pipeline
     batch_size: int = 100
@@ -33,6 +55,7 @@ class Settings(BaseSettings):
     # Processing Manager
     auto_start_processing: bool = False  # Auto-start background processing on startup
     poll_interval_seconds: float = 1.0  # Interval to poll for new issues (seconds)
+    reprocess_all: bool = False  # Force reprocessing of all issues (ignores preprocessed status)
 
     # Clustering
     clustering_method: str = "hdbscan"  # hdbscan or kmeans
@@ -49,6 +72,9 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
+    debug_log_issue_content: bool = True  # Log full issue text in DEBUG mode
+    debug_log_max_content_length: int = 500  # Max length of content to log (0 = unlimited)
+    debug_log_sample_size: int = 3  # Number of sample issues to log in detail
 
 
 # Global settings instance

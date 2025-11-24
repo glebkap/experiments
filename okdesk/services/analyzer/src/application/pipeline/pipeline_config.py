@@ -32,5 +32,5 @@ class PipelineConfig:
                 f"retry_delay_seconds cannot be negative, got {self.retry_delay_seconds}"
             )
 
-        if self.device not in ("cpu", "cuda"):
-            raise ValueError(f"device must be 'cpu' or 'cuda', got {self.device}")
+        if self.device not in ("cpu", "cuda", "mps", "auto"):
+            raise ValueError(f"device must be 'cpu', 'cuda', 'mps', or 'auto', got {self.device}")

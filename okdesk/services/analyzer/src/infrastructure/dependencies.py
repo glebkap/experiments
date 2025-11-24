@@ -111,38 +111,58 @@ def get_text_preprocessor() -> TextPreprocessor:
     """
     preprocessor = TextPreprocessor()
 
+    # TODO: PyMorphy2 is incompatible with Python 3.12 (uses deprecated inspect.getargspec)
+    # Will work without lemmatization for now
     # Initialize pymorphy2 and inject into preprocessor
-    morph_wrapper = PyMorphyWrapper()
-    preprocessor.set_morph_analyzer(morph_wrapper.morph)
+    # morph_wrapper = PyMorphyWrapper()
+    # preprocessor.set_morph_analyzer(morph_wrapper.morph)
 
     return preprocessor
 
 
+# Global singleton instance for EmbeddingGenerator
+_embedding_generator: EmbeddingGenerator | None = None
+
+
 def get_embedding_generator() -> EmbeddingGenerator:
     """
-    Get EmbeddingGenerator service.
+    Get EmbeddingGenerator service singleton.
 
     Returns:
-        SentenceTransformer wrapper instance
+        SentenceTransformer wrapper instance (singleton)
     """
-    return SentenceTransformerWrapper(
-        model_name=settings.embedding_model,
-        device=settings.device,
-    )
+    global _embedding_generator
+
+    if _embedding_generator is None:
+        _embedding_generator = SentenceTransformerWrapper(
+            model_name=settings.embedding_model,
+            device=settings.device,
+        )
+
+    return _embedding_generator
+
+
+# Global singleton instance for VectorDBService
+_vector_db_service: VectorDBService | None = None
 
 
 def get_vector_db_service() -> VectorDBService:
     """
-    Get VectorDBService.
+    Get VectorDBService singleton.
 
     Returns:
-        ChromaDB client instance
+        ChromaDB client instance (singleton)
     """
-    return ChromaDBClient(
-        host=settings.chromadb_host,
-        port=settings.chromadb_port,
-        collection_name=settings.chromadb_collection,
-    )
+    global _vector_db_service
+
+    if _vector_db_service is None:
+        _vector_db_service = ChromaDBClient(
+            host=settings.chromadb_host,
+            port=settings.chromadb_port,
+            collection_name=settings.chromadb_collection,
+        )
+
+    return _vector_db_service
 
 
 def get_clustering_service() -> ClusteringService:
@@ -153,3 +173,46 @@ def get_clustering_service() -> ClusteringService:
         ClusteringService instance
     """
     return ClusteringService()
+
+
+# ==================== Database Session (alias) ====================
+async def get_database_session() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Get database session (alias for get_session).
+
+    Yields:
+        AsyncSession for database operations
+    """
+    async for session in get_session():
+        yield session
+
+
+# ==================== Use Cases ====================
+def get_process_batch_use_case(
+    session: AsyncSession = Depends(get_session),
+) -> "ProcessIssuesBatchUseCase":
+    """
+    Get ProcessIssuesBatchUseCase dependency.
+
+    Args:
+        session: Database session (injected by FastAPI)
+
+    Returns:
+        ProcessIssuesBatchUseCase instance
+    """
+    from ..application.use_cases.process_issues_batch import ProcessIssuesBatchUseCase
+
+    # Create all dependencies
+    issue_repo = IssueRepositoryImpl(session)
+    preprocessed_repo = PreprocessedIssueRepositoryImpl(session)
+    preprocessor = get_text_preprocessor()
+    embedding_gen = get_embedding_generator()
+    vectordb = get_vector_db_service()
+
+    return ProcessIssuesBatchUseCase(
+        issue_repo=issue_repo,
+        preprocessed_repo=preprocessed_repo,
+        preprocessor=preprocessor,
+        embedding_gen=embedding_gen,
+        vectordb=vectordb,
+    )

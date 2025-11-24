@@ -108,3 +108,16 @@ class VectorDBService(ABC):
             True if embedding exists, False otherwise
         """
         pass
+
+    @abstractmethod
+    def clear_all(self) -> int:
+        """
+        Delete all embeddings from vector database.
+
+        WARNING: This will delete the entire collection and recreate it!
+        Used when changing embedding model or dimension.
+
+        Returns:
+            Number of deleted embeddings
+        """
+        pass

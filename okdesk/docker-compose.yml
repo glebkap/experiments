@@ -43,25 +43,25 @@ services:
     restart: unless-stopped
 
   # Parser Service
-  parser:
-    build: ./services/parser
-    container_name: support-parser
-    depends_on:
-      db:
-        condition: service_healthy
-    volumes:
-      - ./data:/app/data:ro
-    environment:
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: support
-      DB_PASSWORD: support
-      DB_NAME: support
-    ports:
-      - "8001:8001"
-    networks:
-      - support-network
-    restart: unless-stopped
+  # parser:
+  #   build: ./services/parser
+  #   container_name: support-parser
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./data:/app/data:ro
+  #   environment:
+  #     DB_HOST: db
+  #     DB_PORT: 5432
+  #     DB_USER: support
+  #     DB_PASSWORD: support
+  #     DB_NAME: support
+  #   ports:
+  #     - "8001:8001"
+  #   networks:
+  #     - support-network
+  #   restart: unless-stopped
 
   # Analyzer Service (TODO: будет создан)
   # analyzer:

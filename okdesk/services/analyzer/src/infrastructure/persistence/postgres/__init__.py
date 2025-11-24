@@ -6,8 +6,8 @@ from .message_repository_impl import MessageRepositoryImpl
 from .models import (
     Base,
     ClusterModel,
+    IssueClusterModel,
     IssueModel,
-    MessageClusterModel,
     MessageModel,
     PreprocessedIssueModel,
 )
@@ -16,8 +16,8 @@ from .preprocessed_issue_repository_impl import PreprocessedIssueRepositoryImpl
 __all__ = [
     "Base",
     "ClusterModel",
+    "IssueClusterModel",
     "IssueModel",
-    "MessageClusterModel",
     "MessageModel",
     "PreprocessedIssueModel",
     "ClusterRepositoryImpl",

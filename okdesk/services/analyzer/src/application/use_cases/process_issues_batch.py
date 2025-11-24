@@ -59,10 +59,16 @@ class ProcessIssuesBatchUseCase:
         Returns:
             Processing result with statistics
         """
-        logger.info(f"Processing batch of {batch_size} issues (device={device})")
+        logger.info("=" * 70)
+        logger.info(f"[ProcessIssuesBatch] Starting batch processing")
+        logger.info(f"[ProcessIssuesBatch] Batch size: {batch_size}, Device: {device}")
+        logger.info("=" * 70)
 
         # Create configuration
         config = PipelineConfig(batch_size=batch_size, device=device)
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"[ProcessIssuesBatch] Pipeline config: {config.__dict__}")
 
         # Create pipeline stages
         stages = [
@@ -73,9 +79,28 @@ class ProcessIssuesBatchUseCase:
             Stage4Complete(),
         ]
 
+        logger.info(f"[ProcessIssuesBatch] Pipeline has {len(stages)} stages")
+
         # Execute pipeline
+        import time
+        start_time = time.time()
+
         executor = PipelineExecutor(config, stages)
         result = await executor.execute()
+
+        elapsed = time.time() - start_time
+
+        # Log result summary
+        logger.info("=" * 70)
+        logger.info(f"[ProcessIssuesBatch] Pipeline finished")
+        logger.info(f"[ProcessIssuesBatch] Success: {result.success}")
+        logger.info(f"[ProcessIssuesBatch] Processed: {result.processed_count} issues")
+        logger.info(f"[ProcessIssuesBatch] Duration: {elapsed:.2f}s")
+        if result.errors:
+            logger.warning(f"[ProcessIssuesBatch] Errors: {len(result.errors)}")
+            for err in result.errors[:3]:  # Log first 3 errors
+                logger.warning(f"  - {err}")
+        logger.info("=" * 70)
 
         # Convert to DTO
         return ProcessingResultDTO(

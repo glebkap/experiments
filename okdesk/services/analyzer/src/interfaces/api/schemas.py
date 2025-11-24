@@ -14,7 +14,7 @@ class PipelineRequest(BaseModel):
     """Request schema for pipeline processing."""
 
     batch_size: int = Field(default=100, ge=1, le=1000, description="Batch size")
-    device: str = Field(default="cpu", description="Device for embeddings (cpu/cuda)")
+    device: str = Field(default="cpu", description="Device for embeddings (cpu/cuda/mps/auto)")
 
 
 class PipelineResponse(BaseModel):
@@ -55,6 +55,7 @@ class ProcessingStatusResponse(BaseModel):
     state: str = Field(description="Current state (stopped/running/paused)")
     batch_size: int = Field(description="Batch size for processing")
     poll_interval_seconds: float = Field(description="Poll interval in seconds")
+    device: str = Field(description="Device for embeddings (cpu/cuda/mps/auto)")
     total_processed: int = Field(description="Total issues processed")
     total_batches: int = Field(description="Total batches processed")
     started_at: Optional[str] = Field(None, description="Processing start time (ISO)")
@@ -101,6 +102,14 @@ class SearchRequest(BaseModel):
     min_similarity: float = Field(
         default=0.7, ge=0.0, le=1.0, description="Minimum similarity threshold"
     )
+
+
+class SearchResponse(BaseModel):
+    """Response schema for similarity search."""
+
+    query: str = Field(description="Search query")
+    results: List[SimilarIssueDTO] = Field(description="Similar issues found")
+    total_results: int = Field(description="Total number of results")
 
 
 # ==================== Reprocess Schema ====================
