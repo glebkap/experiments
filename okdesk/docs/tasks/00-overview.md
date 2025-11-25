@@ -1,19 +1,20 @@
 # Обзор задач разработки
 
 **Проект:** Система анализа намерений пользователей службы поддержки
-**Дата:** 21.11.2025
+**Дата:** 25.11.2025 (обновлено)
 
 ---
 
 ## Документы с декомпозицией
 
-1. **[01-database-service.md](01-database-service.md)** - Database Service (PostgreSQL)
-2. **[02-parser-service.md](02-parser-service.md)** - Parser Service (импорт данных)
-3. **[03-analyzer-service.md](03-analyzer-service.md)** - Analyzer Service (pydantic-ai)
-4. **[04-query-service.md](04-query-service.md)** - Query Service (поиск, статистика, экспорт)
-5. **[05-api-gateway-service.md](05-api-gateway-service.md)** - API Gateway
-6. **[06-cli-service.md](06-cli-service.md)** - CLI Service
-7. **[07-gui-service.md](07-gui-service.md)** - GUI Service (React)
+1. **[01-database-service.md](01-database-service.md)** ✅ - Database Service (PostgreSQL)
+2. **[02-parser-service.md](02-parser-service.md)** ✅ - Parser Service (импорт данных OKDesk/Telegram)
+3. **[03-analyzer-service/plan.md](03-analyzer-service/plan.md)** ✅ - Analyzer Service (Pipeline + ML + ChromaDB)
+4. **[04-analyzer-extensions.md](04-analyzer-extensions.md)** 🔄 - Расширение Analyzer (просмотр issues, статистика, экспорт)
+5. ~~**04-query-service.md**~~ ❌ - Query Service (упразднен, функции перенесены в Analyzer)
+6. **[05-api-gateway.md](05-api-gateway.md)** 🔄 - API Gateway (reverse proxy)
+7. **[06-cli-service.md](06-cli-service.md)** - CLI Service
+8. **[07-gui-service.md](07-gui-service.md)** - GUI Service (React)
 
 ---
 
@@ -36,53 +37,59 @@
 
 ### Фаза 2: Базовые сервисы (Параллельная разработка)
 
-**2. Parser Service**
+**2. Parser Service** ✅ ЗАВЕРШЕН
 - **Приоритет:** Высокий
-- **Время:** 3-5 дней
+- **Статус:** Реализован
 - **Зависит от:** Database Service
-- **Задачи:**
+- **Реализовано:**
   - DDD структура (domain, application, infrastructure, interfaces)
   - OKDesk и Telegram парсеры
-  - API для импорта
-  - Дедупликация
+  - API для импорта (POST /api/v1/import/okdesk, POST /api/v1/import/telegram)
+  - Дедупликация по external_id
 
-**3. Analyzer Service**
+**3. Analyzer Service** ✅ ЗАВЕРШЕН (базовая функциональность)
 - **Приоритет:** Критический
-- **Время:** 5-7 дней
-- **Зависит от:** Database Service
-- **Задачи:**
-  - DDD структура
-  - pydantic-ai агент для анализа
-  - Пакетная обработка (10-50 сообщений)
-  - Динамическое создание намерений
-  - Кластеризация (опционально)
+- **Статус:** Реализован pipeline + кластеризация + семантический поиск
+- **Зависит от:** Database Service, ChromaDB
+- **Реализовано:**
+  - DDD структура + Pipeline Processing (4 этапа)
+  - Preprocessing (HTML cleanup, лемматизация)
+  - Генерация эмбеддингов (SentenceTransformers)
+  - ChromaDB для векторного поиска
+  - Кластеризация (HDBSCAN/K-means)
+  - Семантический поиск
 
-**Результат:** Можно импортировать данные и анализировать их
+**Результат:** Можно импортировать данные, обрабатывать через ML pipeline, кластеризовать и искать похожие issues
 
 ---
 
-### Фаза 3: Интерфейсы доступа (Параллельная разработка)
+### Фаза 3: Расширение Analyzer и API Gateway
 
-**4. Query Service**
-- **Приоритет:** Средний
-- **Время:** 3-4 дня
-- **Зависит от:** Database, Analyzer
+**4. Analyzer Service Extensions** 🔄 В РАЗРАБОТКЕ
+- **Приоритет:** Высокий
+- **Время:** 2-3 дня
+- **Зависит от:** Analyzer Service (базовый)
 - **Задачи:**
-  - DDD структура (read models)
-  - Поиск и фильтрация
-  - Статистика
-  - Экспорт (CSV, JSON)
+  - Просмотр issues с фильтрацией (GET /analyzer/issues)
+  - Детали обращения (GET /analyzer/issues/{id})
+  - Просмотр кластеров (GET /analyzer/clusters/{id}/issues)
+  - Полнотекстовый поиск (GET /analyzer/search/fulltext)
+  - Статистика (GET /analyzer/stats/*)
+  - Экспорт данных (POST /analyzer/export)
 
-**5. API Gateway**
+**5. API Gateway** ✅ ЗАВЕРШЕН
 - **Приоритет:** Средний
-- **Время:** 1-2 дня
-- **Зависит от:** Parser, Analyzer, Query
-- **Задачи:**
-  - Маршрутизация к сервисам
-  - Health checks
-  - CORS, логирование
+- **Статус:** Реализован
+- **Зависит от:** Parser, Analyzer
+- **Реализовано:**
+  - Reverse proxy к Parser и Analyzer
+  - Агрегация health checks всех сервисов
+  - CORS middleware для веб-клиентов
+  - Логирование всех proxy запросов
+  - Unit тесты (18 тестов, 91% coverage)
+  - Docker интеграция
 
-**Результат:** Единый API для доступа к системе
+**Результат:** Полнофункциональная система с единой точкой входа
 
 ---
 
@@ -114,32 +121,35 @@
 ## Минимально жизнеспособный продукт (MVP)
 
 ### MVP включает:
+
 1. ✅ Database Service
-2. ✅ Parser Service (только OKDesk)
-3. ✅ Analyzer Service (базовый анализ без кластеризации)
-4. ✅ CLI Service (базовые команды: import, analyze, stats)
+2. ✅ Parser Service (OKDesk + Telegram)
+3. ✅ Analyzer Service (pipeline + кластеризация + семантический поиск)
+4. 🔄 Analyzer Extensions (просмотр issues, статистика)
+5. 🔄 API Gateway (reverse proxy)
+6. CLI Service (базовые команды)
 
 ### MVP позволяет:
-- Импортировать данные из OKDesk
-- Автоматически анализировать сообщения
-- Просматривать результаты через CLI
-- Получать базовую статистику
 
-**Время разработки MVP:** ~2-3 недели
+- Импортировать данные из OKDesk и Telegram
+- Обрабатывать issues через ML pipeline (preprocessing + embeddings)
+- Кластеризовать схожие issues
+- Семантический поиск похожих issues
+- Просматривать результаты через API
+- Получать статистику
+
+**Статус MVP:** 85% завершен (осталось Analyzer Extensions + API Gateway)
 
 ---
 
 ## Полная версия (v1.0)
 
 ### Дополнительно к MVP:
-5. ✅ Query Service (полный)
-6. ✅ API Gateway
-7. ✅ Parser Service (с поддержкой Telegram)
-8. ✅ CLI Service (все команды)
-9. ✅ GUI Service
-10. ✅ Analyzer Service (с кластеризацией)
 
-**Время разработки полной версии:** ~1.5-2 месяца
+7. CLI Service (полный функционал с Rich форматированием)
+8. GUI Service (React web interface)
+9. Расширенная аналитика и визуализация
+10. Экспорт в различные форматы
 
 ---
 

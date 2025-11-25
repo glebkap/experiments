@@ -12,6 +12,7 @@ from ..domain.repositories.message_repository import MessageRepository
 from ..domain.repositories.preprocessed_issue_repository import (
     PreprocessedIssueRepository,
 )
+from ..domain.repositories.stats_repository import StatsRepository
 from ..domain.services.clustering_service import ClusteringService
 from ..domain.services.embedding_generator import EmbeddingGenerator
 from ..domain.services.text_preprocessor import TextPreprocessor
@@ -25,6 +26,7 @@ from .persistence.postgres import (
     MessageRepositoryImpl,
     PreprocessedIssueRepositoryImpl,
 )
+from .persistence.postgres.stats_repository_impl import StatsRepositoryImpl
 from .vectordb.chromadb_client import ChromaDBClient
 
 
@@ -99,6 +101,22 @@ def get_cluster_repository(
         ClusterRepository implementation
     """
     return ClusterRepositoryImpl(session)
+
+
+def get_stats_repository(
+    session: AsyncSession = Depends(get_session),
+) -> StatsRepository:
+    """
+    Get StatsRepository dependency.
+
+    Args:
+        session: Database session (injected by FastAPI)
+
+    Returns:
+        StatsRepository implementation
+    """
+    vectordb = get_vector_db_service()
+    return StatsRepositoryImpl(session, vectordb)
 
 
 # ==================== Domain Services ====================

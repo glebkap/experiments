@@ -25,6 +25,24 @@ class Base(DeclarativeBase):
     pass
 
 
+class SourceModel(Base):
+    """SQLAlchemy model for sources table."""
+
+    __tablename__ = "sources"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Relationships
+    issues: Mapped[list["IssueModel"]] = relationship(
+        "IssueModel", back_populates="source"
+    )
+
+
 class IssueModel(Base):
     """SQLAlchemy model for issues table."""
 
@@ -47,11 +65,14 @@ class IssueModel(Base):
     )
 
     # Relationships
+    source: Mapped["SourceModel"] = relationship(
+        "SourceModel", back_populates="issues"
+    )
     preprocessed: Mapped[Optional["PreprocessedIssueModel"]] = relationship(
         "PreprocessedIssueModel", back_populates="issue", uselist=False
     )
     messages: Mapped[list["MessageModel"]] = relationship(
-        "MessageModel", back_populates="issue"
+        "MessageModel", back_populates="issue", order_by="MessageModel.published_at"
     )
     cluster_assignments: Mapped[list["IssueClusterModel"]] = relationship(
         "IssueClusterModel", back_populates="issue"

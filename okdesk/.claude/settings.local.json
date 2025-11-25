@@ -9,7 +9,12 @@
       "Bash(find:*)",
       "Bash(uv init:*)",
       "Bash(uv add:*)",
-      "Bash(uv run:*)"
+      "Bash(uv run:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker compose:*)",
+      "Bash(uv sync:*)",
+      "Bash(python -m py_compile:*)"
     ],
     "deny": [],
     "ask": []

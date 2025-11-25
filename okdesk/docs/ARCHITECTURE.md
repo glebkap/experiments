@@ -38,23 +38,23 @@
     │   (Web UI)     │        │   (Commands)     │
     └────────┬───────┘        └────────┬─────────┘
              │                          │
-             │ REST API                 │ Direct calls
+             │ REST API                 │ REST API
              ▼                          ▼
     ┌─────────────────────────────────────────────┐
     │           API Gateway Service                │
-    │       (Маршрутизация запросов)              │
-    └────────┬──────────┬──────────┬───────────────┘
-             │          │          │
-             ▼          ▼          ▼
-    ┌────────────┐ ┌──────────┐ ┌─────────────────┐
-    │  Parser    │ │ Analyzer │ │  Query Service  │
-    │  Service   │ │ Service  │ │  (Поиск/Отчеты) │
-    └─────┬──────┘ └────┬─────┘ └────────┬────────┘
-          │             │ │                │
-          │             │ └────────┐       │
-          └─────────────┴──────────┼───────┘
-                        │          │
-                        ▼          ▼
+    │          (Reverse Proxy)                     │
+    └────────┬──────────────────────────┬──────────┘
+             │                          │
+             ▼                          ▼
+    ┌────────────────┐        ┌──────────────────────┐
+    │  Parser        │        │   Analyzer Service   │
+    │  Service       │        │  (ML + Search + DB)  │
+    └────────┬───────┘        └────────┬─────────────┘
+             │                          │
+             │                          │
+             └──────────┬───────────────┘
+                        │
+                        ▼
              ┌──────────────────────┐  ┌─────────────┐
              │   PostgreSQL DB      │  │  ChromaDB   │
              │ (Структурные данные) │  │ (Векторы)   │
@@ -258,7 +258,7 @@ CREATE INDEX idx_intents_code ON intents(code);
 7. Возврат статистики
 
 ### 3.3 Analyzer Service
-**Назначение:** Pipeline-обработка issues с генерацией эмбеддингов и кластеризацией
+**Назначение:** Pipeline-обработка issues с генерацией эмбеддингов, кластеризацией, поиском и статистикой
 
 **Технологии:**
 - Python 3.12
@@ -268,7 +268,7 @@ CREATE INDEX idx_intents_code ON intents(code);
 - **HDBSCAN / K-means** - алгоритмы кластеризации
 - BeautifulSoup4 для очистки HTML
 - pymorphy2 для лемматизации
-- psycopg2 для работы с PostgreSQL
+- SQLAlchemy 2.0 для работы с PostgreSQL
 
 **Архитектура:** DDD (Domain-Driven Design) + Pipeline Processing
 
@@ -311,20 +311,47 @@ CREATE INDEX idx_intents_code ON intents(code);
 - Загрузка всех embeddings из ChromaDB
 - Применение HDBSCAN (автоопределение кластеров) или K-means
 - Вычисление центроидов и расстояний
-- Сохранение в таблицы: `clusters`, `message_clusters`
+- Сохранение в таблицы: `clusters`, `issue_clusters`
 - Опционально: генерация названий через LLM
 
 **API endpoints:**
-- `POST /api/v1/analyzer/process` - запуск pipeline обработки
-  - Body: `{batch_size: 100}`
+
+*Pipeline и кластеризация:*
+
+- `POST /api/v1/analyzer/pipeline/process` - запуск pipeline обработки
+  - Body: `{batch_size: 100, device: "cpu"}`
   - Response: `{processed_count, duration, stats}`
-- `POST /api/v1/analyzer/resume` - возобновление после сбоя
-- `POST /api/v1/analyzer/reprocess/{issue_id}` - переобработка issue
-- `POST /api/v1/analyzer/cluster` - запуск кластеризации
-  - Body: `{method: "hdbscan|kmeans", use_llm: false}`
-- `POST /api/v1/analyzer/search/similar` - семантический поиск
-  - Body: `{issue_id: "uuid", top_k: 10}`
-- `GET /api/v1/analyzer/stats` - статистика обработки
+- `GET /api/v1/analyzer/pipeline/status` - статус pipeline
+- `POST /api/v1/analyzer/clustering/run` - запуск кластеризации
+  - Body: `{method: "hdbscan|kmeans", min_cluster_size: 5}`
+- `GET /api/v1/analyzer/clustering/info` - список кластеров
+
+*Семантический поиск:*
+
+- `POST /api/v1/analyzer/search/similar` - семантический поиск похожих issues
+  - Body: `{query: "текст", top_k: 10, min_similarity: 0.7}`
+  - Response: `{results: [{issue_id, similarity, text_snippet}]}`
+
+*Просмотр данных (добавляется):*
+
+- `GET /api/v1/analyzer/issues` - список обращений с фильтрами
+  - Query: `?status=opened&source_id=uuid&limit=50&offset=0`
+- `GET /api/v1/analyzer/issues/{id}` - детали обращения с messages
+- `GET /api/v1/analyzer/clusters/{id}/issues` - issues в кластере
+- `GET /api/v1/analyzer/search/fulltext` - полнотекстовый поиск
+  - Query: `?q=текст&limit=50`
+
+*Статистика (добавляется):*
+
+- `GET /api/v1/analyzer/stats/processing` - статистика обработки
+- `GET /api/v1/analyzer/stats/clusters` - статистика по кластерам
+- `GET /api/v1/analyzer/stats/sources` - статистика по источникам
+- `GET /api/v1/analyzer/stats/timeline` - временная динамика
+
+*Экспорт (добавляется):*
+
+- `POST /api/v1/analyzer/export` - экспорт данных
+  - Body: `{format: "csv|json", filters: {...}}`
 
 **Производительность:**
 - Preprocessing: ~100-200 issues/sec
@@ -332,45 +359,13 @@ CREATE INDEX idx_intents_code ON intents(code);
 - Vector DB: ~500-1000 issues/sec
 - **Итого: 10000 issues за ~3-6 минут**
 
-**Новые таблицы БД:**
+**Таблицы БД:**
 - `preprocessed_issues` - предобработанный текст issues
 - `clusters` - кластеры схожих issues
-- `message_clusters` - связь issues с кластерами
+- `issue_clusters` - связь issues с кластерами
 
-### 3.4 Query Service
-**Назначение:** Поиск, фильтрация и генерация отчетов
-
-**Технологии:**
-- Python 3.12
-- FastAPI для API
-- SQLAlchemy 2.0 для ORM
-- ChromaDB client для семантического поиска
-- psycopg2
-
-**Функции:**
-- **Семантический поиск** - поиск похожих issues через векторные представления
-- Полнотекстовый поиск по сообщениям (PostgreSQL full-text)
-- Фильтрация по кластерам, тегам, датам, источникам
-- Просмотр кластеров и их содержимого
-- Агрегация статистики
-- Генерация отчетов (JSON, CSV)
-
-**API endpoints:**
-- `POST /api/v1/search/semantic` - семантический поиск похожих issues
-  - Body: `{query: "текст" | issue_id: "uuid", top_k: 10}`
-- `GET /api/v1/search` - полнотекстовый поиск
-- `GET /api/v1/issues` - список обращений с фильтрами
-- `GET /api/v1/issues/{id}` - детали обращения
-- `GET /api/v1/clusters` - список кластеров
-- `GET /api/v1/clusters/{id}` - детали кластера с issues
-- `GET /api/v1/stats/processing` - статистика обработки
-- `GET /api/v1/stats/clusters` - статистика по кластерам
-- `GET /api/v1/stats/sources` - статистика по источникам
-- `GET /api/v1/stats/timeline` - временная статистика
-- `POST /api/v1/export` - экспорт данных
-
-### 3.5 API Gateway Service
-**Назначение:** Единая точка входа и маршрутизация
+### 3.4 API Gateway Service
+**Назначение:** Единая точка входа и маршрутизация запросов к микросервисам
 
 **Технологии:**
 - Python 3.12
@@ -378,23 +373,40 @@ CREATE INDEX idx_intents_code ON intents(code);
 - httpx для HTTP запросов
 
 **Функции:**
-- Маршрутизация к соответствующим сервисам
-- Логирование запросов
+- Reverse proxy к Parser и Analyzer сервисам
+- Агрегация health checks всех сервисов
 - CORS middleware
+- Логирование запросов
+- Rate limiting (опционально)
 
 **Структура маршрутизации:**
 ```
-/api/v1/import/*   -> Parser Service
-/api/v1/analyze/*  -> Analyzer Service
-/api/v1/search     -> Query Service
-/api/v1/issues/*   -> Query Service
-/api/v1/stats/*    -> Query Service
-/api/v1/clusters/* -> Query Service
-/api/v1/export     -> Query Service
-/api/v1/health     -> Health checks
+# Import & Parsing
+/api/v1/import/*           -> Parser Service (http://parser:8001)
+
+# Analysis, Processing, Search
+/api/v1/analyzer/*         -> Analyzer Service (http://analyzer:8002)
+  - /analyzer/pipeline/*   -> Pipeline обработка
+  - /analyzer/clustering/* -> Кластеризация
+  - /analyzer/search/*     -> Семантический и полнотекстовый поиск
+  - /analyzer/issues/*     -> Просмотр issues
+  - /analyzer/clusters/*   -> Просмотр кластеров
+  - /analyzer/stats/*      -> Статистика
+  - /analyzer/export       -> Экспорт данных
+
+# Health & Monitoring
+/api/v1/health             -> Агрегированный health check всех сервисов
+/api/v1/health/parser      -> Health check Parser Service
+/api/v1/health/analyzer    -> Health check Analyzer Service
 ```
 
-### 3.6 CLI Service
+**Примечания:**
+- API Gateway НЕ содержит бизнес-логики
+- Все запросы проксируются к соответствующим сервисам
+- Ответы возвращаются клиенту без модификации
+- В случае недоступности сервиса возвращается 503 Service Unavailable
+
+### 3.5 CLI Service
 **Назначение:** Интерфейс командной строки
 
 **Технологии:**
