@@ -64,58 +64,81 @@ class ClusterAllIssuesUseCase:
         """
         start_time = time.time()
 
-        logger.info(f"Starting clustering with method={method}")
+        logger.info("=" * 70)
+        logger.info(f"[Clustering] Starting clustering with method={method}")
+        logger.info("=" * 70)
 
         # 1. Load all embeddings from ChromaDB
+        logger.info("[Step 1/6] Loading embeddings from ChromaDB...")
         issue_ids, embeddings = await self.vectordb.get_all_embeddings()
 
         if len(issue_ids) == 0:
             raise ValueError("No embeddings found in vector database")
 
-        logger.info(f"Loaded {len(issue_ids)} embeddings")
+        logger.info(f"[Step 1/6] ✓ Loaded {len(issue_ids)} embeddings (shape: {embeddings.shape})")
 
         # 2. Apply clustering algorithm
+        logger.info(f"[Step 2/6] Running {method.upper()} clustering...")
         if method == "hdbscan":
+            logger.info(f"[Step 2/6] Parameters: min_cluster_size={min_cluster_size}, min_samples={min_samples}")
+            clustering_start = time.time()
             labels, centroids = self.clustering_service.cluster_hdbscan(
                 embeddings, min_cluster_size=min_cluster_size, min_samples=min_samples
             )
+            clustering_duration = time.time() - clustering_start
         elif method == "kmeans":
+            logger.info(f"[Step 2/6] Parameters: n_clusters={n_clusters or 'auto'}")
+            clustering_start = time.time()
             labels, centroids = self.clustering_service.cluster_kmeans(
                 embeddings, n_clusters=n_clusters
             )
+            clustering_duration = time.time() - clustering_start
         else:
             raise ValueError(f"Unknown clustering method: {method}")
 
+        logger.info(f"[Step 2/6] ✓ Clustering completed in {clustering_duration:.2f}s")
+
         # 3. Compute distances to centroids
+        logger.info("[Step 3/6] Computing distances to cluster centroids...")
         distances = self.clustering_service.compute_distances(
             embeddings, centroids, labels
         )
+        logger.info(f"[Step 3/6] ✓ Computed {len(distances)} distances")
 
         # 4. Clear existing clusters
-        await self.cluster_repo.clear_all_clusters()
-        logger.info("Cleared existing clusters")
+        logger.info("[Step 4/6] Clearing existing clusters from database...")
+        deleted_count = await self.cluster_repo.clear_all_clusters()
+        logger.info(f"[Step 4/6] ✓ Cleared {deleted_count} existing clusters")
 
         # 5. Create new clusters in database
         unique_labels = set(labels)
         if -1 in unique_labels:
             unique_labels.remove(-1)  # Exclude outliers
 
+        outliers_count = int((labels == -1).sum())
+        logger.info(f"[Step 5/6] Creating {len(unique_labels)} clusters in database...")
+        logger.info(f"[Step 5/6] Found {outliers_count} outliers (not assigned to any cluster)")
+
         cluster_map = {}  # label -> cluster_id
 
-        for label in sorted(unique_labels):
+        for idx, label in enumerate(sorted(unique_labels), 1):
             mask = labels == label
             size = int(mask.sum())
 
             cluster = await self.cluster_repo.create_cluster(
-                label=f"Cluster {label}",
+                label=int(label),
                 centroid_embedding=centroids[label],
+                name=f"Cluster {label}",
             )
 
             cluster_map[label] = cluster.id
-            logger.debug(f"Created cluster {cluster.id} with {size} items")
+            logger.info(f"[Step 5/6] Created cluster {idx}/{len(unique_labels)}: label={label}, size={size}, id={cluster.id}")
 
         # 6. Assign issues to clusters (batch by cluster)
-        for label, cluster_id in cluster_map.items():
+        logger.info(f"[Step 6/6] Assigning {len(issue_ids) - outliers_count} issues to clusters...")
+        total_assigned = 0
+
+        for idx, (label, cluster_id) in enumerate(cluster_map.items(), 1):
             mask = labels == label
             cluster_issue_ids = [issue_ids[i] for i, m in enumerate(mask) if m]
             cluster_distances = [distances[i] for i, m in enumerate(mask) if m]
@@ -126,15 +149,19 @@ class ClusterAllIssuesUseCase:
                 distances=cluster_distances,
             )
 
-            logger.debug(
-                f"Assigned {len(cluster_issue_ids)} issues to cluster {label}"
+            total_assigned += len(cluster_issue_ids)
+            logger.info(
+                f"[Step 6/6] Assigned {len(cluster_issue_ids)} issues to cluster {label} "
+                f"({idx}/{len(cluster_map)}, total: {total_assigned}/{len(issue_ids) - outliers_count})"
             )
 
         # 7. Prepare result
-        outliers_count = int((labels == -1).sum())
+        logger.info("[Step 6/6] ✓ All issues assigned to clusters")
+
         duration = time.time() - start_time
 
         # Load created clusters for summary
+        logger.info("Loading cluster summaries...")
         clusters = await self.cluster_repo.get_all_clusters()
         cluster_summaries = []
 
@@ -145,8 +172,8 @@ class ClusterAllIssuesUseCase:
             cluster_summaries.append(
                 ClusterSummaryDTO(
                     cluster_id=str(cluster.id),
-                    cluster_label=int(cluster.label.split()[-1]),  # Extract number from "Cluster N"
-                    name=cluster.description,
+                    cluster_label=cluster.cluster_label,
+                    name=cluster.name or f"Cluster {cluster.cluster_label}",
                     size=cluster.size,
                     sample_issues=sample_titles,
                 )
@@ -158,12 +185,18 @@ class ClusterAllIssuesUseCase:
             outliers_count=outliers_count,
             clusters=cluster_summaries,
             duration_seconds=duration,
+            method=method,
         )
 
-        logger.info(
-            f"Clustering completed: {len(unique_labels)} clusters, "
-            f"{outliers_count} outliers in {duration:.2f}s"
-        )
+        logger.info("=" * 70)
+        logger.info("[Clustering] ✓ Completed successfully!")
+        logger.info(f"  • Total issues: {len(issue_ids)}")
+        logger.info(f"  • Clusters created: {len(unique_labels)}")
+        logger.info(f"  • Outliers: {outliers_count} ({outliers_count/len(issue_ids)*100:.1f}%)")
+        logger.info(f"  • Average cluster size: {(len(issue_ids)-outliers_count)/len(unique_labels):.1f}")
+        logger.info(f"  • Clustering algorithm time: {clustering_duration:.2f}s")
+        logger.info(f"  • Total duration: {duration:.2f}s")
+        logger.info("=" * 70)
 
         return result
 

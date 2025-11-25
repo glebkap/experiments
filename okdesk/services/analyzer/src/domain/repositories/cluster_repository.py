@@ -14,14 +14,15 @@ class ClusterRepository(ABC):
 
     @abstractmethod
     async def create_cluster(
-        self, label: str, centroid_embedding: Optional[np.ndarray] = None
+        self, label: int, centroid_embedding: np.ndarray, name: Optional[str] = None
     ) -> Cluster:
         """
         Create new cluster.
 
         Args:
-            label: Cluster label/name
-            centroid_embedding: Optional centroid vector
+            label: Cluster label from clustering algorithm (int)
+            centroid_embedding: Centroid vector
+            name: Optional human-readable name
 
         Returns:
             Created Cluster domain object
@@ -93,5 +94,22 @@ class ClusterRepository(ABC):
 
         Returns:
             Number of clusters
+        """
+        pass
+
+    @abstractmethod
+    async def get_cluster_issues(
+        self, cluster_id: UUID, limit: Optional[int] = None, offset: int = 0
+    ) -> List[UUID]:
+        """
+        Get issue IDs assigned to a cluster.
+
+        Args:
+            cluster_id: Cluster UUID
+            limit: Maximum number of issues to return (None = all)
+            offset: Number of issues to skip
+
+        Returns:
+            List of issue UUIDs in the cluster
         """
         pass

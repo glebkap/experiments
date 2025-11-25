@@ -1,8 +1,11 @@
 """Clustering service for grouping similar issues."""
 
+import logging
 from typing import Optional, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class ClusteringService:
@@ -32,16 +35,25 @@ class ClusteringService:
         """
         import hdbscan
 
+        logger.debug(f"Running HDBSCAN on {len(embeddings)} samples...")
+        logger.debug(f"Parameters: min_cluster_size={min_cluster_size}, min_samples={min_samples}, metric='cosine'")
         clusterer = hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
             min_samples=min_samples,
-            metric='euclidean',  # Use euclidean (cosine requires pynndescent)
+            metric='cosine',  # Use cosine for normalized embeddings (better for semantic similarity)
             cluster_selection_method='eom',  # Excess of Mass
         )
 
         labels = clusterer.fit_predict(embeddings)
 
+        # Count clusters
+        unique_labels = set(labels)
+        n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
+        n_outliers = (labels == -1).sum()
+        logger.debug(f"HDBSCAN found {n_clusters} clusters, {n_outliers} outliers")
+
         # Compute centroids for each cluster
+        logger.debug("Computing cluster centroids...")
         centroids = self._compute_centroids(embeddings, labels)
 
         return labels, centroids
@@ -67,8 +79,11 @@ class ClusteringService:
         from sklearn.cluster import KMeans
 
         if n_clusters is None:
+            logger.debug("Auto-detecting optimal number of clusters...")
             n_clusters = self._find_optimal_k(embeddings, max_k)
+            logger.debug(f"Optimal K selected: {n_clusters}")
 
+        logger.debug(f"Running K-means with {n_clusters} clusters...")
         kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
         labels = kmeans.fit_predict(embeddings)
         centroids = kmeans.cluster_centers_
@@ -144,16 +159,20 @@ class ClusteringService:
         best_score = -1
 
         max_k = min(max_k, len(embeddings) - 1)
+        logger.info(f"Testing K from 2 to {max_k} to find optimal number of clusters...")
 
         for k in range(2, max_k + 1):
             kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
             labels = kmeans.fit_predict(embeddings)
             score = silhouette_score(embeddings, labels)
 
+            logger.debug(f"K={k}: silhouette_score={score:.4f}")
+
             if score > best_score:
                 best_score = score
                 best_k = k
 
+        logger.info(f"Optimal K found: {best_k} (score={best_score:.4f})")
         return best_k
 
     def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:

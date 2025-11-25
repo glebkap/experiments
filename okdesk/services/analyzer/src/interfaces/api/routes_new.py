@@ -11,6 +11,7 @@ from ...application.processing_manager import (
     get_processing_manager as get_global_processing_manager,
 )
 from ...application.use_cases.cluster_all_issues import ClusterAllIssuesUseCase
+from ...application.use_cases.get_cluster_issues import GetClusterIssuesUseCase
 from ...application.use_cases.reprocess_issue import ReprocessIssueUseCase
 from ...application.use_cases.search_similar_issues import SearchSimilarIssuesUseCase
 from ...domain.repositories.cluster_repository import ClusterRepository
@@ -312,7 +313,8 @@ async def get_clusters_info(
         return [
             ClusterInfoResponse(
                 id=str(cluster.id),
-                label=cluster.label,
+                cluster_label=cluster.cluster_label,
+                name=cluster.name,
                 size=cluster.size,
                 description=cluster.description,
             )
@@ -321,6 +323,52 @@ async def get_clusters_info(
 
     except Exception as e:
         logger.error(f"Failed to get clusters info: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/clustering/{cluster_id}/issues")
+async def get_cluster_issues(
+    cluster_id: UUID,
+    limit: Optional[int] = None,
+    offset: int = 0,
+    cluster_repo: ClusterRepository = Depends(get_cluster_repository),
+    issue_repo: IssueRepository = Depends(get_issue_repository),
+):
+    """
+    Get all issues in a specific cluster.
+
+    Args:
+        cluster_id: Cluster UUID
+        limit: Maximum number of issues to return (None = all)
+        offset: Number of issues to skip for pagination
+
+    Returns:
+        List of issues with full information
+    """
+    try:
+        use_case = GetClusterIssuesUseCase(
+            cluster_repo=cluster_repo,
+            issue_repo=issue_repo,
+        )
+
+        issues = await use_case.execute(
+            cluster_id=cluster_id,
+            limit=limit,
+            offset=offset,
+        )
+
+        return {
+            "cluster_id": str(cluster_id),
+            "total": len(issues),
+            "limit": limit,
+            "offset": offset,
+            "issues": [issue.to_dict() for issue in issues],
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to get cluster issues: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -28,30 +28,30 @@ class ClusterRepositoryImpl(ClusterRepository):
         self.session = session
 
     async def create_cluster(
-        self, label: str, centroid_embedding: Optional[np.ndarray] = None
+        self, label: int, centroid_embedding: np.ndarray, name: Optional[str] = None
     ) -> Cluster:
         """
         Create a new cluster.
 
         Args:
-            label: Cluster label/name
-            centroid_embedding: Optional centroid vector
+            label: Cluster label from clustering algorithm (int)
+            centroid_embedding: Centroid vector
+            name: Optional human-readable name
 
         Returns:
             Created Cluster domain object
         """
-        logger.debug(f"Creating cluster with label '{label}'")
+        logger.debug(f"Creating cluster with label {label}")
 
         cluster_id = uuid4()
 
         # Convert numpy array to list for PostgreSQL ARRAY type
-        centroid_list = (
-            centroid_embedding.tolist() if centroid_embedding is not None else None
-        )
+        centroid_list = centroid_embedding.tolist()
 
         model = ClusterModel(
             id=cluster_id,
-            label=label,
+            cluster_label=label,
+            name=name,
             description=None,
             centroid_embedding=centroid_list,
             size=0,
@@ -61,7 +61,7 @@ class ClusterRepositoryImpl(ClusterRepository):
         await self.session.commit()
         await self.session.refresh(model)
 
-        logger.info(f"Created cluster {cluster_id} with label '{label}'")
+        logger.info(f"Created cluster {cluster_id} with label {label}")
 
         return self._to_domain(model)
 
@@ -209,6 +209,38 @@ class ClusterRepositoryImpl(ClusterRepository):
         logger.debug(f"Total clusters: {count}")
         return count
 
+    async def get_cluster_issues(
+        self, cluster_id: UUID, limit: Optional[int] = None, offset: int = 0
+    ) -> List[UUID]:
+        """
+        Get issue IDs assigned to a cluster.
+
+        Args:
+            cluster_id: Cluster UUID
+            limit: Maximum number of issues to return (None = all)
+            offset: Number of issues to skip
+
+        Returns:
+            List of issue UUIDs in the cluster
+        """
+        logger.debug(f"Fetching issues for cluster {cluster_id} (limit={limit}, offset={offset})")
+
+        query = (
+            select(IssueClusterModel.issue_id)
+            .where(IssueClusterModel.cluster_id == cluster_id)
+            .order_by(IssueClusterModel.distance_to_centroid)  # Closest first
+            .offset(offset)
+        )
+
+        if limit is not None:
+            query = query.limit(limit)
+
+        result = await self.session.execute(query)
+        issue_ids = [row[0] for row in result.all()]
+
+        logger.debug(f"Found {len(issue_ids)} issues in cluster {cluster_id}")
+        return issue_ids
+
     def _to_domain(self, model: ClusterModel) -> Cluster:
         """
         Convert SQLAlchemy model to domain object.
@@ -220,15 +252,12 @@ class ClusterRepositoryImpl(ClusterRepository):
             Cluster domain object
         """
         # Convert PostgreSQL ARRAY back to numpy array
-        centroid = (
-            np.array(model.centroid_embedding, dtype=np.float32)
-            if model.centroid_embedding is not None
-            else None
-        )
+        centroid = np.array(model.centroid_embedding, dtype=np.float32)
 
         return Cluster(
             id=model.id,
-            label=model.label,
+            cluster_label=model.cluster_label,
+            name=model.name,
             description=model.description,
             centroid_embedding=centroid,
             size=model.size,

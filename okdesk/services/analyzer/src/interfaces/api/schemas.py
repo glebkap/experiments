@@ -43,7 +43,8 @@ class ClusterInfoResponse(BaseModel):
     """Response schema for cluster information."""
 
     id: str = Field(description="Cluster UUID")
-    label: str = Field(description="Cluster label")
+    cluster_label: int = Field(description="Cluster label (numeric)")
+    name: Optional[str] = Field(None, description="Cluster name")
     size: int = Field(description="Number of issues in cluster")
     description: Optional[str] = Field(None, description="Cluster description")
 

@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import (
     TIMESTAMP,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -93,10 +94,11 @@ class ClusterModel(Base):
     __tablename__ = "clusters"
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
-    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    cluster_label: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
+    name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    centroid_embedding: Mapped[Optional[list[float]]] = mapped_column(
-        ARRAY(item_type=float), nullable=True
+    centroid_embedding: Mapped[list[float]] = mapped_column(
+        ARRAY(Float), nullable=False
     )
     size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

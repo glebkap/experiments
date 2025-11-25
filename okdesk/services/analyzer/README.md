@@ -171,6 +171,7 @@ Swagger UI доступен по адресу: `http://localhost:8002/docs`
 
 - `POST /api/v1/analyzer/clustering/run` - Запуск кластеризации
 - `GET /api/v1/analyzer/clustering/info` - Информация о кластерах
+- `GET /api/v1/analyzer/clustering/{cluster_id}/issues` - Получить все issues в кластере (с пагинацией)
 
 ### Search
 
@@ -225,6 +226,7 @@ curl -X POST http://localhost:8002/api/v1/analyzer/issues/{issue-uuid}/reprocess
 ### Кластеризация
 
 ```bash
+# Запустить кластеризацию
 curl -X POST http://localhost:8002/api/v1/analyzer/clustering/run \
   -H "Content-Type: application/json" \
   -d '{
@@ -232,6 +234,35 @@ curl -X POST http://localhost:8002/api/v1/analyzer/clustering/run \
     "min_cluster_size": 5,
     "min_samples": 3
   }'
+
+# Получить информацию о всех кластерах
+curl http://localhost:8002/api/v1/analyzer/clustering/info | python -m json.tool
+
+# Получить все issues в конкретном кластере
+curl "http://localhost:8002/api/v1/analyzer/clustering/{cluster-uuid}/issues?limit=10&offset=0" | python -m json.tool
+```
+
+**Пример вывода issues в кластере:**
+```json
+{
+  "cluster_id": "abc-123-def-456",
+  "total": 10,
+  "limit": 10,
+  "offset": 0,
+  "issues": [
+    {
+      "id": "issue-uuid-1",
+      "external_id": "12345",
+      "source_id": "source-uuid",
+      "title": "Проблема с доступом к сайту",
+      "description": "Не могу войти на сайт...",
+      "status": "opened",
+      "priority": 2,
+      "created_at": "2025-11-20T10:30:00",
+      "updated_at": "2025-11-20T11:45:00"
+    }
+  ]
+}
 ```
 
 ### Поиск похожих issues
@@ -633,6 +664,39 @@ export BATCH_SIZE=50
 # Использовать более легкую модель
 export EMBEDDING_MODEL=cointegrated/rubert-tiny2
 ```
+
+### Слишком много outliers при кластеризации
+
+**Проблема:** HDBSCAN помечает большинство issues как outliers (не относящиеся ни к какому кластеру).
+
+**Причины:**
+1. Параметры `HDBSCAN_MIN_CLUSTER_SIZE` и `HDBSCAN_MIN_SAMPLES` слишком строгие
+2. Метрика расстояния не подходит для нормализованных эмбеддингов
+
+**Решения:**
+
+1. **Смягчить параметры:**
+   ```bash
+   # Для небольших датасетов (< 1000 issues)
+   export HDBSCAN_MIN_CLUSTER_SIZE=3
+   export HDBSCAN_MIN_SAMPLES=1
+
+   # Для средних датасетов (1000-10000 issues)
+   export HDBSCAN_MIN_CLUSTER_SIZE=5
+   export HDBSCAN_MIN_SAMPLES=2
+
+   # Для больших датасетов (> 10000 issues)
+   export HDBSCAN_MIN_CLUSTER_SIZE=10
+   export HDBSCAN_MIN_SAMPLES=3
+   ```
+
+2. **Использовать K-means вместо HDBSCAN:**
+   ```bash
+   # K-means не создает outliers, все точки присваиваются кластерам
+   export CLUSTERING_METHOD=kmeans
+   ```
+
+**Примечание:** Сервис использует **cosine** метрику для HDBSCAN, которая лучше работает с эмбеддингами из SentenceTransformers (они нормализованы для cosine similarity).
 
 ## License
 
